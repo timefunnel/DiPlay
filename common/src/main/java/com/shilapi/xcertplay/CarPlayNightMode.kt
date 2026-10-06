@@ -12,7 +12,7 @@ enum class CarPlayNightMode(val key: String) {
     }
 }
 
-/** Main-thread controller. Only its output is sent to CarPlay; Android theme is never changed. */
+/** Main-thread controller for CarPlay and its local overlays. Android's system theme is never changed. */
 internal class CarPlayNightModeController(
     private val light: LightSource,
     private val scheduler: Scheduler,

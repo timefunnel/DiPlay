@@ -17,6 +17,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -46,6 +47,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -379,6 +381,21 @@ class CarPlayHostActivity : ComponentActivity() {
     private var vpnReady = false
     private var hotspotStatus = HotspotStatus(state = "off")
     private var menuOpen = false
+    private var climatePanel: CarPlayClimatePanel? = null
+    private var climatePanelGeneration = 0
+    private var climatePanelRequested = false
+    private var climateDismissTouch = false
+    @Volatile private var climateResumed = false
+    private val wheelClimateHost = object : WheelClimateHost.Host {
+        override val available: Boolean get() = climateResumed && hasWindowFocus() && !menuOpen &&
+            !shuttingDown.get() && controller?.activeAirPlaySessionToken() != null
+        override val panelVisible: Boolean get() = climatePanel != null
+        override fun togglePanel() {
+            if (climatePanel != null || climatePanelRequested) closeClimatePanel() else openClimatePanel()
+        }
+        override fun perform(action: WheelControlAction) { climatePanel?.perform(action) }
+        override fun closePanel() { closeClimatePanel() }
+    }
     private var latestStage = "Preparing CarPlay"
     private var darkMode = false
     private var paintWaitingScreen: () -> Unit = {}
@@ -393,6 +410,7 @@ class CarPlayHostActivity : ComponentActivity() {
             initialNight = darkMode,
         ) { night ->
             darkMode = night
+            climatePanel?.setNightMode(night)
             paintWaitingScreen()
             applyClusterTurnOverlay()
             appendLog("CarPlay switched to ${if (night) "night" else "day"} mode")
@@ -530,7 +548,9 @@ class CarPlayHostActivity : ComponentActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (picturePanel != null) {
+                    if (climatePanel != null) {
+                        closeClimatePanel()
+                    } else if (picturePanel != null) {
                         closePicturePanel()
                     } else if (menuOpen) {
                         if (safeAreaEditorActive) closeSafeAreaEditor() else cancelSettingsEdits()
@@ -741,6 +761,8 @@ class CarPlayHostActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        climateResumed = true
+        WheelClimateHost.attach(wheelClimateHost)
         val savedNightMode = AirPlayPersistence.loadCarPlayNightMode(this)
         val savedThreshold = AirPlayPersistence.loadAmbientLightThreshold(this)
         val savedDelay = AirPlayPersistence.loadAmbientDelaySeconds(this)
@@ -1065,7 +1087,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     // Hardware navigation belongs to the iPhone-rendered CarPlay UI, not Android View focus.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (!menuOpen && AndroidTvInputMode.shouldUseKnobAsPrimaryInput(this) &&
+        if (!menuOpen && climatePanel == null && AndroidTvInputMode.shouldUseKnobAsPrimaryInput(this) &&
             CarPlayRemoteKeys.dispatch(event, controller)) {
             if (event.repeatCount == 0) {
                 Log.d(
@@ -1093,7 +1115,7 @@ class CarPlayHostActivity : ComponentActivity() {
         if (hasFocus) {
             refreshConfiguration(source = ThemeModeDiagnostics.Source.WINDOW_FOCUS)
             applyFullscreenMode()
-        }
+        } else closeClimatePanel()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -1102,6 +1124,9 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        climateResumed = false
+        closeClimatePanel()
+        WheelClimateHost.detach(wheelClimateHost)
         nightModeController.pause()
         super.onPause()
     }
@@ -1197,6 +1222,8 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        closeClimatePanel()
+        WheelClimateHost.detach(wheelClimateHost)
         resetSidePanel()
         nightModeController.pause()
         pictureBinding?.close()
@@ -1516,6 +1543,14 @@ class CarPlayHostActivity : ComponentActivity() {
                 }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        content.addView(Button(this).apply {
+            text = getString(R.string.climate_panel_title)
+            textSize = 20f
+            setOnClickListener {
+                cancelSettingsEdits()
+                openClimatePanel()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         content.addView(
             settingsCategoryHeader(getString(R.string.connection)),
             LinearLayout.LayoutParams(
@@ -4303,6 +4338,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun openSettingsMenu() {
+        closeClimatePanel()
         if (menuOpen) return
         controller?.sendTouch(emptyList())
         loadPersistedSettings()
@@ -4325,6 +4361,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun openPicturePanel() {
+        closeClimatePanel()
         closePicturePanel()
         val generation = picturePanelGeneration
         val root = videoView?.parent as? FrameLayout ?: return
@@ -4347,6 +4384,59 @@ class CarPlayHostActivity : ComponentActivity() {
         picturePanel?.let { (it.parent as? ViewGroup)?.removeView(it) }
         picturePanel = null
         CarPlayPicture.showOriginal(false)
+    }
+
+    private fun openClimatePanel() {
+        if (!wheelClimateHost.available) {
+            Toast.makeText(this, getString(R.string.climate_open_carplay), Toast.LENGTH_SHORT).show()
+            return
+        }
+        closePicturePanel()
+        val root = videoView?.parent as? FrameLayout ?: return
+        val token = controller?.activeAirPlaySessionToken() ?: return
+        val generation = ++climatePanelGeneration
+        climatePanelRequested = true
+        controller?.sendTouch(emptyList())
+        root.post {
+            if (generation != climatePanelGeneration) return@post
+            climatePanelRequested = false
+            if (!wheelClimateHost.available || controller?.activeAirPlaySessionToken() != token) return@post
+            val panel = CarPlayClimatePanel(this, allowed = {
+                climateResumed && !menuOpen && !shuttingDown.get() &&
+                    controller?.activeAirPlaySessionToken() == token &&
+                    getSystemService(AudioManager::class.java)?.mode == AudioManager.MODE_NORMAL
+            }, closePanel = ::closeClimatePanel, initialNight = darkMode, requestNight = ::setClimateNightMode)
+            val width = minOf(dp(760), root.width - dp(24)).coerceAtLeast(1)
+            val maxHeight = (root.height - dp(24)).coerceAtLeast(1)
+            panel.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST))
+            val height = panel.measuredHeight
+            root.addView(panel, FrameLayout.LayoutParams(width, height, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                setMargins(dp(12), 0, dp(12), dp(12))
+            })
+            climatePanel = panel
+            panel.translationY = height.toFloat() + dp(12)
+            panel.animate().translationY(0f).setDuration(220).start()
+            panel.start()
+        }
+    }
+
+    private fun closeClimatePanel() {
+        ++climatePanelGeneration
+        climatePanelRequested = false
+        climatePanel?.let {
+            it.stop()
+            it.animate().cancel()
+            (it.parent as? ViewGroup)?.removeView(it)
+        }
+        climatePanel = null
+    }
+
+    private fun setClimateNightMode(night: Boolean) {
+        carPlayNightMode = if (night) CarPlayNightMode.NIGHT else CarPlayNightMode.DAY
+        AirPlayPersistence.saveCarPlayNightMode(this, carPlayNightMode)
+        nightModeController.configure(carPlayNightMode, nightModeOrNull(resources.configuration.uiMode) ?: false,
+            ambientLightThreshold, ambientDelaySeconds)
     }
 
     private fun saveSettingsAndReconnect() {
@@ -4408,6 +4498,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun shutdown(terminateProcess: Boolean, reason: String, completion: () -> Unit = {}) {
+        closeClimatePanel()
         if (!shuttingDown.compareAndSet(false, true)) { completion(); return }
         resetSidePanel()
         startupRetryBudget.disconnected()
@@ -4447,6 +4538,16 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun onHostTouch(view: View, event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            climateDismissTouch = climatePanel != null
+            if (climateDismissTouch) closeClimatePanel()
+        }
+        if (climateDismissTouch) {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                climateDismissTouch = false
+            }
+            return true
+        }
         if (menuOpen) return true
 
         when (event.actionMasked) {

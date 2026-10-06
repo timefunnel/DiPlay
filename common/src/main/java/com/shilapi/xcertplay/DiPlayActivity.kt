@@ -868,11 +868,11 @@ class DiPlayActivity : ComponentActivity() {
                                 if (it) checkAdbState(mayAsk = true)
                             }
                         }
-                        wheelKeyControls(card)
                     }
                 }
             }
         }
+        section(content, getString(R.string.wheel_key_service_label)) { card -> wheelKeyControls(card) }
         if (BydOutputSettings.available(this)) section(content, getString(R.string.byd_navigation), R.drawable.ic_dp_navigation) { card ->
             toggle(card, getString(R.string.navigation_on_hud_and_instrument_cluster),
                 getString(R.string.show_phone_navigation_arrows_distance_and_street_names_on),
@@ -1586,6 +1586,11 @@ class DiPlayActivity : ComponentActivity() {
 
     /** Steering-wheel keys for the dashboard map zoom and the CarPlay joystick: the switches, the key service and the keys. */
     private fun wheelKeyControls(card: LinearLayout) {
+        toggle(card, getString(R.string.wheel_custom_controls), getString(R.string.wheel_custom_description),
+            WheelControlSettings.enabled(this)) {
+            WheelControlSettings.setEnabled(this, it)
+            render()
+        }
         toggle(card, getString(R.string.wheel_map_zoom), getString(R.string.wheel_map_zoom_description),
             WheelZoomSettings.enabled(this)) {
             WheelZoomSettings.setEnabled(this, it)
@@ -1598,7 +1603,8 @@ class DiPlayActivity : ComponentActivity() {
         }
         val zoom = WheelZoomSettings.enabled(this)
         val joystick = WheelZoomSettings.joystick(this)
-        if (!zoom && !joystick) return
+        val custom = WheelControlSettings.enabled(this)
+        if (!zoom && !joystick && !custom) return
         val connected = WheelKeyService.connected()
         card.addView(label(getString(when {
             connected -> R.string.wheel_keys_service_on
@@ -1622,6 +1628,7 @@ class DiPlayActivity : ComponentActivity() {
                     .onFailure { toast(getString(R.string.wheel_keys_no_settings)) }
             }, matchButton(10, 56))
         }
+        if (custom) customWheelBindings(card)
         if (zoom) {
             val behaviours = WheelZoomSettings.Behaviour.entries
             choice(card, getString(R.string.wheel_zoom_behaviour),
@@ -1663,6 +1670,44 @@ class DiPlayActivity : ComponentActivity() {
                 else toast(getString(R.string.wheel_keys_service_off))
             }
             card.addView(assign, matchButton(10, 56))
+        }
+    }
+
+    private fun customWheelBindings(card: LinearLayout) {
+        for (mode in WheelControlMode.entries) {
+            card.addView(label(getString(if (mode == WheelControlMode.NORMAL)
+                R.string.wheel_custom_normal else R.string.wheel_custom_climate), 18, TEXT, true), matchButton(16, 44))
+            for (action in WheelControlAction.entries.filter { it.mode == mode }) {
+                val name = getString(action.label)
+                val key = WheelControlSettings.key(this, action)
+                val title = getString(R.string.wheel_custom_assignment, name,
+                    key?.let { getString(R.string.wheel_custom_bound, it.code) }
+                        ?: getString(R.string.wheel_custom_unassigned))
+                lateinit var assign: Button
+                assign = button(title, false) {
+                    val started = WheelKeyService.learnCustom(action, cancelled = {
+                        runOnUiThread { assign.text = title }
+                    }) { _, removed ->
+                        runOnUiThread {
+                            if (removed.isNotEmpty()) toast(getString(R.string.wheel_custom_replaced,
+                                removed.joinToString(" · ") { getString(it.label) }))
+                            render()
+                        }
+                    }
+                    if (started) assign.text = getString(R.string.wheel_key_press, name)
+                    else toast(getString(R.string.wheel_keys_service_off))
+                }
+                val line = row()
+                line.addView(assign, LinearLayout.LayoutParams(0, dp(64), 1f))
+                line.addView(button("×", false) {
+                    WheelControlSettings.clear(this, action)
+                    render()
+                }.apply {
+                    isEnabled = key != null
+                    contentDescription = getString(R.string.wheel_custom_clear, name)
+                }, LinearLayout.LayoutParams(dp(56), dp(64)).apply { marginStart = dp(8) })
+                card.addView(line, matchButton(8, 64))
+            }
         }
     }
 

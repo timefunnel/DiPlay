@@ -32,7 +32,7 @@ class BydAdbSettingsUiTest {
 
     @Before fun setUp() {
         val app = RuntimeEnvironment.getApplication()
-        for (name in listOf("diplay_byd_outputs", "diplay_byd_vehicle_fields", "diplay_car_hotspot", "xcertplay_airplay")) {
+        for (name in listOf("diplay_byd_outputs", "diplay_byd_vehicle_fields", "diplay_car_hotspot", "xcertplay_airplay", "diplay_wheel_controls")) {
             app.getSharedPreferences(name, 0).edit().clear().commit()
         }
         BydVehicleFieldStore.clearMemoryForTests()
@@ -50,6 +50,21 @@ class BydAdbSettingsUiTest {
         controls = LinearLayout(activity)
         assertTrue(CarHotspotSetup.isBydHeadUnit(activity))
         assertFalse(BydOutputSettings.navigationAvailable(activity))
+    }
+
+    @Test fun customWheelSettingsRemainAvailableWithoutClusterOrNavigationSupport() {
+        assertFalse(WheelControlSettings.enabled(activity))
+        fun settingsPage() = LinearLayout(activity).also { page ->
+            ReflectionHelpers.callInstanceMethod<Unit>(activity, "settings",
+                ReflectionHelpers.ClassParameter.from(LinearLayout::class.java, page))
+        }
+        assertEquals(1, switches(settingsPage()).count {
+            it.contentDescription == activity.getString(R.string.wheel_custom_controls)
+        })
+        WheelControlSettings.setEnabled(activity, true)
+        val page = settingsPage()
+        assertTrue(labels(page).contains(activity.getString(R.string.wheel_custom_normal)))
+        assertTrue(labels(page).contains(activity.getString(R.string.wheel_custom_climate)))
     }
 
     @Test fun hotspotAndVehicleSettingsHaveOneOwnerWithoutNavigationServices() {

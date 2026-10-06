@@ -1,6 +1,7 @@
 package com.shilapi.xcertplay
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Handler
@@ -8,6 +9,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.RadioButton
 import android.widget.TextView
@@ -26,6 +28,9 @@ import org.mockito.MockedConstruction
 import org.mockito.Mockito.mockConstruction
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
+import org.mockito.ArgumentMatchers.anyList
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
@@ -59,12 +64,96 @@ class CarPlayHostSettingsTest {
     }
 
     @After fun tearDown() {
+        invoke("closeClimatePanel")
         (field("shuttingDown") as AtomicBoolean).set(true)
         (field("mainHandler") as Handler).removeCallbacksAndMessages(null)
         (field("teardownExecutor") as ExecutorService).shutdownNow()
         (field("airPlayCommandExecutor") as ExecutorService).shutdownNow()
         CarPlayBackgroundSession.clear()
         controllers.close()
+    }
+
+    @Test fun closingClimateWithAnOutsideTouchConsumesTheWholeSequence() {
+        val controller = attachController()
+        mountClimatePanel()
+        touch(MotionEvent.ACTION_DOWN, 1, 100f)
+        assertNull(field("climatePanel"))
+        assertTrue(field("climateDismissTouch") as Boolean)
+        touch(MotionEvent.ACTION_MOVE, 1, 150f)
+        touch(MotionEvent.ACTION_UP, 1, 150f)
+        assertFalse(field("climateDismissTouch") as Boolean)
+        verify(controller, never()).sendTouch(anyList())
+    }
+
+    @Test fun pausingCarPlayStopsAndRemovesTheClimatePanel() {
+        val worker = mountClimatePanel()
+        invoke("onPause")
+        assertNull(field("climatePanel"))
+        assertTrue(worker.isShutdown)
+        assertFalse(field("climateResumed") as Boolean)
+    }
+
+    @Test fun losingFocusStopsAndRemovesTheClimatePanel() {
+        val worker = mountClimatePanel()
+        activity.onWindowFocusChanged(false)
+        assertNull(field("climatePanel"))
+        assertTrue(worker.isShutdown)
+    }
+
+    @Test fun openingTheSettingsMenuStopsTheClimatePanel() {
+        val worker = mountClimatePanel()
+        invoke("openSettingsMenu")
+        assertTrue(field("menuOpen") as Boolean)
+        assertNull(field("climatePanel"))
+        assertTrue(worker.isShutdown)
+    }
+
+    private fun mountClimatePanel(): PausedExecutorService {
+        val worker = PausedExecutorService()
+        val panel = CarPlayClimatePanel(activity, { true }, {}, field("darkMode") as Boolean,
+            { night ->
+                activity.javaClass.getDeclaredMethod("setClimateNightMode", Boolean::class.javaPrimitiveType)
+                    .apply { isAccessible = true }.invoke(activity, night)
+            }, BydClimateBackend(ClimateTestBus()), worker)
+        ((field("videoView") as View).parent as FrameLayout).addView(panel)
+        setField("climatePanel", panel)
+        return worker
+    }
+
+    @Test fun climateThemeShortcutUsesTheSharedDiPlayModeAndPersistsAcrossReopening() {
+        AirPlayPersistence.saveCarPlayNightMode(activity, CarPlayNightMode.NIGHT)
+        invoke("loadPersistedSettings")
+        val worker = mountClimatePanel()
+        val panel = field("climatePanel") as View
+        views(panel).filterIsInstance<Button>().single {
+            it.contentDescription == activity.getString(R.string.climate_switch_light)
+        }.performClick()
+        assertEquals(CarPlayNightMode.DAY, AirPlayPersistence.loadCarPlayNightMode(activity))
+        assertEquals(false, field("darkMode"))
+        assertSame(panel, field("climatePanel"))
+        assertFalse(worker.isShutdown)
+        assertTrue(views(panel).any { it.contentDescription == activity.getString(R.string.climate_switch_dark) })
+        invoke("closeClimatePanel")
+        invoke("loadPersistedSettings")
+        mountClimatePanel()
+        assertTrue(views(field("climatePanel") as View).any {
+            it.contentDescription == activity.getString(R.string.climate_switch_dark)
+        })
+    }
+
+    @Test fun openClimatePanelFollowsSystemThemeChangesWithoutReplacingThePanel() {
+        AirPlayPersistence.saveCarPlayNightMode(activity, CarPlayNightMode.SYSTEM)
+        invoke("loadPersistedSettings")
+        mountClimatePanel()
+        val panel = field("climatePanel") as View
+        for ((mode, description) in listOf(Configuration.UI_MODE_NIGHT_YES to R.string.climate_switch_light,
+            Configuration.UI_MODE_NIGHT_NO to R.string.climate_switch_dark)) {
+            activity.javaClass.getDeclaredMethod("refreshConfiguration", Configuration::class.java, ThemeModeDiagnostics.Source::class.java)
+                .apply { isAccessible = true }.invoke(activity, Configuration().apply { uiMode = mode }, ThemeModeDiagnostics.Source.CALLBACK)
+            assertSame(panel, field("climatePanel"))
+            assertTrue(views(panel).any { it.contentDescription == activity.getString(description) })
+        }
+        assertEquals(CarPlayNightMode.SYSTEM, AirPlayPersistence.loadCarPlayNightMode(activity))
     }
 
     @Test fun configuredFingerCountsOpenTheMountedMenuWithoutLeavingCarPlay() {

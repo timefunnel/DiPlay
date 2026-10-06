@@ -40,9 +40,12 @@ import com.shilapi.xcertplay.hud.BydOutputSettings
 class WheelKeyService : AccessibilityService() {
     private val keys = WheelZoomKeys()
     private val joystick = WheelJoystick()
+    private val customPresses = WheelKeyPresses()
     private val handler = Handler(Looper.getMainLooper())
     private var learning: WheelZoomSettings.Role? = null
     private var learnt: ((WheelZoomSettings.Role, WheelKey) -> Unit)? = null
+    private var customLearning: WheelControlAction? = null
+    private var customLearnt: ((WheelKey, List<WheelControlAction>) -> Unit)? = null
     private var learningCancelled: (() -> Unit)? = null
     private val endLearning = Runnable { clearLearning() }
     private val endTimedMode = Runnable {
@@ -54,6 +57,7 @@ class WheelKeyService : AccessibilityService() {
     internal var session: () -> Any? = { CarPlayBackgroundSession.snapshot()?.controller?.activeAirPlaySessionToken() }
     internal var knob: (AirPlayKnobState) -> Boolean = { CarPlayBackgroundSession.snapshot()?.controller?.sendKnob(it) == true }
     internal var routeActive: () -> Boolean = { CarPlayGlance.snapshot().maneuverType != null }
+    internal var customAction: (WheelControlAction) -> Boolean = ::performCustomAction
 
     // With the auto-off setting the joystick ends a while after the last press and when a route starts,
     // so the keys go back to music and volume without a thought.
@@ -89,6 +93,7 @@ class WheelKeyService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        WheelClimateHost.close()
         if (running === this) running = null
         clearLearning()
         keys.updateEligibility(null)
@@ -100,6 +105,7 @@ class WheelKeyService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        WheelClimateHost.close()
         if (running === this) running = null
         clearLearning()
         keys.timeOut()
@@ -115,18 +121,47 @@ class WheelKeyService : AccessibilityService() {
     override fun onKeyEvent(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return false
         val down = event.action == KeyEvent.ACTION_DOWN
+        val key = WheelKey(event.keyCode, event.scanCode, deviceName(event.deviceId))
+        refreshEligibility()
+        val calling = inCall()
+        if (calling) clearLearning()
+        if (calling || session() == null) WheelClimateHost.close()
+        // Preserve the whole DOWN/UP pair even when a panel, setting, session or call changes mid-press.
+        val custom = customPresses.filter(PhysicalWheelKey(event.deviceId, event.keyCode, event.scanCode),
+            down, event.repeatCount == 0) {
+            val learn = customLearning
+            if (learn != null && !calling) {
+                val done = customLearnt
+                clearLearning(notify = false)
+                val removed = WheelControlSettings.assign(this, learn, key)
+                done?.invoke(key, removed)
+                WheelZoomKeys.Action.CONSUME
+            } else if (WheelControlSettings.enabled(this) && session() != null && !calling) {
+                val action = WheelControlSettings.action(this, key, WheelClimateHost.panelVisible)
+                if (action == null) WheelZoomKeys.Action.PASS else {
+                    if (action == WheelControlAction.PANEL) {
+                        keys.timeOut()
+                        if (joystick.end()) joystickEnded()
+                    }
+                    val sent = customAction(action)
+                    Log.i(TAG, "custom wheel $key -> $action sent=$sent")
+                    if (!sent) Toast.makeText(this, getString(
+                        if (action == WheelControlAction.PANEL) R.string.climate_open_carplay
+                        else R.string.wheel_custom_action_failed), Toast.LENGTH_SHORT).show()
+                    WheelZoomKeys.Action.CONSUME
+                }
+            } else WheelZoomKeys.Action.PASS
+        }
+        if (custom != WheelZoomKeys.Action.PASS) return true
         if (CarPlayCallKeys.onKey(this, event.keyCode, down)) return true
         if (BydOutputSettings.carPlayCallControls(this) &&
             CarPlayMediaButton.opensSiriWhileCarPlay(event.keyCode) && session() != null) {
             if (!down) Log.i(TAG, "CarPlay voice key ${event.keyCode}: Siri sent=${CarPlayBackgroundSession.snapshot()?.controller?.requestSiri() == true}")
             return true
         }
-        val key = WheelKey(event.keyCode, event.scanCode, deviceName(event.deviceId))
-        refreshEligibility()
-        val calling = inCall()
-        if (calling) clearLearning()
         val enabled = WheelZoomSettings.enabled(this)
-        val role = if (enabled || WheelZoomSettings.joystick(this)) WheelZoomSettings.roleOf(this, key) else null
+        val role = if ((enabled || WheelZoomSettings.joystick(this)) && !WheelClimateHost.panelVisible)
+            WheelZoomSettings.roleOf(this, key) else null
         val controller = CarPlayBackgroundSession.snapshot()?.controller
         val action = keys.onKey(
             role = role.takeIf { enabled },
@@ -158,11 +193,13 @@ class WheelKeyService : AccessibilityService() {
         return true
     }
 
-    private fun eligibleRoute(): Any? = if (WheelZoomSettings.enabled(this)) mapRoute() else null
+    private fun eligibleRoute(): Any? = if (WheelZoomSettings.enabled(this) && !WheelClimateHost.panelVisible) mapRoute() else null
 
     private fun refreshEligibility() {
         val joystickAllowed = WheelZoomSettings.joystick(this)
-        if (!WheelZoomSettings.enabled(this) && !joystickAllowed) clearLearning()
+        if (!WheelZoomSettings.enabled(this) && !joystickAllowed && !WheelControlSettings.enabled(this)) clearLearning()
+        if (session() == null || inCall()) WheelClimateHost.close()
+        if (WheelClimateHost.panelVisible && joystick.end()) joystickEnded()
         if (keys.updateEligibility(eligibleRoute())) handler.removeCallbacks(endTimedMode)
         // A new CarPlay session, or the setting turned off, ends the joystick quietly.
         if (joystick.updateSession(session()) or (!joystickAllowed && joystick.end())) stopJoystickTimers()
@@ -231,9 +268,11 @@ class WheelKeyService : AccessibilityService() {
     }
 
     private fun clearLearning(notify: Boolean = true) {
-        val cancelled = learningCancelled.takeIf { learning != null && notify }
+        val cancelled = learningCancelled.takeIf { (learning != null || customLearning != null) && notify }
         learning = null
         learnt = null
+        customLearning = null
+        customLearnt = null
         learningCancelled = null
         handler.removeCallbacks(endLearning)
         cancelled?.invoke()
@@ -241,10 +280,29 @@ class WheelKeyService : AccessibilityService() {
 
     private fun settingsChanged() {
         clearLearning()
+        if (!WheelControlSettings.enabled(this)) WheelClimateHost.close()
         keys.timeOut()
         handler.removeCallbacks(endTimedMode)
         refreshEligibility()
         armJoystickTimers() // the auto-off setting may have changed
+    }
+
+    private fun performCustomAction(action: WheelControlAction): Boolean {
+        val controller = CarPlayBackgroundSession.snapshot()?.controller
+        return when (action) {
+            WheelControlAction.PLAY_PAUSE -> controller?.sendMediaButton(CarPlayMediaButton.PLAY_PAUSE) == true
+            WheelControlAction.NEXT -> controller?.sendMediaButton(CarPlayMediaButton.NEXT) == true
+            WheelControlAction.PREVIOUS -> controller?.sendMediaButton(CarPlayMediaButton.PREVIOUS) == true
+            WheelControlAction.SIRI -> controller?.requestSiri() == true
+            WheelControlAction.VOLUME_UP, WheelControlAction.VOLUME_DOWN -> {
+                val audio = getSystemService(AudioManager::class.java) ?: return false
+                audio.adjustStreamVolume(AudioManager.STREAM_MUSIC,
+                    if (action == WheelControlAction.VOLUME_UP) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+                    AudioManager.FLAG_SHOW_UI)
+                true
+            }
+            else -> WheelClimateHost.dispatch(action)
+        }
     }
 
     // In the timed behaviour zoom mode ends a few seconds after the last press.
@@ -301,6 +359,18 @@ class WheelKeyService : AccessibilityService() {
 
         fun cancelLearning() { running?.onMain { clearLearning() } }
 
+        fun learnCustom(action: WheelControlAction, cancelled: () -> Unit = {},
+            done: (WheelKey, List<WheelControlAction>) -> Unit): Boolean {
+            val service = running ?: return false
+            if (!WheelControlSettings.enabled(service)) return false
+            service.clearLearning()
+            service.customLearning = action
+            service.customLearnt = done
+            service.learningCancelled = cancelled
+            service.handler.postDelayed(service.endLearning, LEARNING_TIMEOUT_MILLIS)
+            return true
+        }
+
         fun settingsChanged() { running?.onMain { settingsChanged() } }
 
         fun enabledInSettings(context: Context): Boolean {
@@ -317,7 +387,7 @@ class WheelKeyService : AccessibilityService() {
             if (access != LocalAdb.Access.READY) return@use access
             if (!mayAsk && !needsRestore(context)) return@use if (connected()) access else LocalAdb.Access.UNREACHABLE
             val allowed = applyServiceSettings(context, adb::shell) {
-                mayAsk || WheelZoomSettings.enabled(context) || WheelZoomSettings.joystick(context)
+                mayAsk || WheelZoomSettings.enabled(context) || WheelZoomSettings.joystick(context) || WheelControlSettings.enabled(context)
             }
             if (allowed) Log.i(TAG, "wheel key service allowed over adb")
             if (allowed) access else LocalAdb.Access.UNREACHABLE
@@ -359,7 +429,7 @@ class WheelKeyService : AccessibilityService() {
         }
 
         internal fun needsRestore(context: Context): Boolean = !connected() &&
-            (WheelZoomSettings.enabled(context) || WheelZoomSettings.joystick(context))
+            (WheelZoomSettings.enabled(context) || WheelZoomSettings.joystick(context) || WheelControlSettings.enabled(context))
 
         /**
          * Android takes the service off the allowed list when the app is force-stopped (BYD's system does

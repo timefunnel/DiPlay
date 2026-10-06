@@ -1,7 +1,11 @@
 package com.shilapi.xcertplay
 
 import android.content.res.Configuration
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
 import com.shilapi.xcertplay.airplay.AirPlaySession
+import com.shilapi.xcertplay.host.R
 import java.io.File
 import java.util.concurrent.ExecutorService
 import org.junit.After
@@ -40,6 +44,7 @@ class CarPlayHostThemeDiagnosticsTest {
     }
 
     @After fun tearDown() {
+        (getField("climatePanel") as? CarPlayClimatePanel)?.stop()
         commands.shutdownNow()
         (getField("teardownExecutor") as ExecutorService).shutdownNow()
         (getField("sessionLog") as SessionLogFile).close()
@@ -85,6 +90,26 @@ class CarPlayHostThemeDiagnosticsTest {
         verify(session, times(0)).setNightMode(true)
         assertTrue(logFile.readText().contains("reported=dark applied=light sessionActive=true"))
     }
+
+    @Test fun climateThemeShortcutUpdatesTheExistingCarPlayEventChannel() {
+        val session = mock(AirPlaySession::class.java)
+        setField("activeAirPlaySession", session)
+        val panel = CarPlayClimatePanel(activity, { true }, {}, true, { night ->
+            activity.javaClass.getDeclaredMethod("setClimateNightMode", Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(activity, night)
+        }, BydClimateBackend(ClimateTestBus()), PausedExecutorService())
+        setField("climatePanel", panel)
+        descendants(panel).filterIsInstance<Button>().single {
+            it.contentDescription == activity.getString(R.string.climate_switch_light)
+        }.performClick()
+        commands.runAll()
+        verify(session, times(1)).setNightMode(false)
+        assertEquals(CarPlayNightMode.DAY, AirPlayPersistence.loadCarPlayNightMode(activity))
+        assertTrue(descendants(panel).any { it.contentDescription == activity.getString(R.string.climate_switch_dark) })
+    }
+
+    private fun descendants(view: View): List<View> = listOf(view) +
+        if (view is ViewGroup) (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
 
     private fun refresh(mode: Int, source: ThemeModeDiagnostics.Source) {
         activity.javaClass.getDeclaredMethod("refreshConfiguration", Configuration::class.java, ThemeModeDiagnostics.Source::class.java)
