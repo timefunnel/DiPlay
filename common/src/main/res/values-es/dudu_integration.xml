@@ -1,7 +1,7 @@
 <resources>
     <string name="settings_dudu_integration">Lanzador Dudu (experimental)</string>
     <string name="settings_dudu_full_carplay">CarPlay completo en la tarjeta de mapa de Dudu</string>
-    <string name="settings_dudu_full_carplay_description">Selecciona DiPlay en el complemento de mapas de Dudu. La tarjeta muestra CarPlay completo y permite tocarlo. Conserva la conexión y las proporciones al cambiar de tamaño. Dudu gestiona los botones del volante.</string>
+    <string name="settings_dudu_full_carplay_description">Selecciona DiPlay en el complemento de mapas de Dudu para mostrar y controlar CarPlay completo con las proporciones de la tarjeta. El primer tamaño o una nueva proporción reconecta CarPlay automáticamente con una breve interrupción. Cambiar entre los diseños declarados de pantalla completa y tarjeta mantiene la conexión. Dudu gestiona los botones del volante.</string>
     <string name="settings_dudu_music_setup">En Dudu, selecciona DiPlay como fuente de música y permite a Dudu acceder a las notificaciones. La información, portada, estado y posición se sincronizan desde el iPhone. Reproducir, pausar y cambiar de pista controlan el iPhone. No se puede arrastrar la posición. Abre CarPlay para usar los ajustes de DiPlay.</string>
     <string name="settings_dudu_overlay_permission">Permiso de superposición</string>
     <string name="settings_dudu_overlay_permission_needed">Se necesita permiso para mostrar CarPlay sobre Dudu.</string>

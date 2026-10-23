@@ -1,7 +1,7 @@
 <resources>
     <string name="settings_dudu_integration">Dudu launcher (experimental)</string>
     <string name="settings_dudu_full_carplay">Full CarPlay in Dudu’s map card</string>
-    <string name="settings_dudu_full_carplay_description">Select DiPlay in Dudu’s AMap plugin. The card shows the complete interactive CarPlay screen. It keeps the connection and aspect ratio when resized. Dudu handles wheel keys; DiPlay publishes day/night status and a standard music session.</string>
+    <string name="settings_dudu_full_carplay_description">Select DiPlay in Dudu’s AMap plugin to show and control the complete CarPlay screen. CarPlay adapts to the card’s aspect ratio. The first card size or a new aspect ratio automatically reconnects CarPlay, briefly interrupting it. Switching between declared full-screen and card layouts keeps the connection. Dudu handles wheel keys; DiPlay publishes day/night status and a standard music session.</string>
     <string name="settings_dudu_music_setup">In Dudu, select DiPlay as the music source and enable notification access for Dudu. Track information, artwork, playback state and position come from the iPhone; play, pause and track controls return to the iPhone. Position seeking is not available. Open CarPlay to use DiPlay settings.</string>
     <string name="settings_dudu_overlay_permission">Overlay permission</string>
     <string name="settings_dudu_overlay_permission_needed">Overlay permission is required to show CarPlay in Dudu.</string>

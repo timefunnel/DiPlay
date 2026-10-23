@@ -23,6 +23,24 @@ internal object DuduLauncher {
             changed()
         }
     private var lastNight: Boolean? = null
+    private const val SIZE_PREFS = "diplay_dudu_card"
+
+    /** A close request hides the card, but its last measured size is needed at the next handshake. */
+    fun rememberedSize(context: Context, screenWidth: Int, screenHeight: Int): Pair<Int, Int>? {
+        val prefs = context.getSharedPreferences(SIZE_PREFS, Context.MODE_PRIVATE)
+        if (prefs.getInt("screen_width", 0) != screenWidth ||
+            prefs.getInt("screen_height", 0) != screenHeight) return null
+        val width = prefs.getInt("width", 0)
+        val height = prefs.getInt("height", 0)
+        return if (width in 1..screenWidth && height in 1..screenHeight) width to height else null
+    }
+
+    private fun rememberSize(context: Context, bounds: Rect, screenWidth: Int, screenHeight: Int) {
+        if (rememberedSize(context, screenWidth, screenHeight) == (bounds.width() to bounds.height())) return
+        context.getSharedPreferences(SIZE_PREFS, Context.MODE_PRIVATE).edit()
+            .putInt("screen_width", screenWidth).putInt("screen_height", screenHeight)
+            .putInt("width", bounds.width()).putInt("height", bounds.height()).apply()
+    }
 
     fun observe(listener: () -> Unit): () -> Unit {
         listeners += listener
@@ -51,6 +69,7 @@ internal object DuduLauncher {
                 // A newly visible/restarted launcher may have missed the previous theme announcement.
                 if (requestedBounds == null) lastNight = null
                 requestedBounds = bounds
+                rememberSize(context, bounds, metrics.widthPixels, metrics.heightPixels)
                 changed()
             }
             CLOSE -> {

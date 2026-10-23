@@ -1,7 +1,7 @@
 <resources>
     <string name="settings_dudu_integration">Оболочка Dudu (экспериментально)</string>
     <string name="settings_dudu_full_carplay">Весь CarPlay в карточке карты Dudu</string>
-    <string name="settings_dudu_full_carplay_description">Выберите DiPlay в плагине карт Dudu. Карточка показывает весь CarPlay с сенсорным управлением. При изменении размера сохраняются соединение и пропорции. Кнопками руля управляет Dudu.</string>
+    <string name="settings_dudu_full_carplay_description">Выберите DiPlay в плагине карт Dudu для показа всего CarPlay с управлением и пропорциями карточки. При первом получении размера или изменении пропорций CarPlay автоматически переподключается с коротким перерывом. Переключение между объявленными полноэкранной и карточной компоновками сохраняет соединение. Кнопками руля управляет Dudu.</string>
     <string name="settings_dudu_music_setup">В Dudu выберите DiPlay как источник музыки и разрешите Dudu доступ к уведомлениям. Данные песни, обложка, состояние и позиция поступают с iPhone. Команды воспроизведения, паузы и смены трека отправляются на iPhone. Перемотка недоступна. Для настроек DiPlay откройте CarPlay.</string>
     <string name="settings_dudu_overlay_permission">Поверх других окон</string>
     <string name="settings_dudu_overlay_permission_needed">Для показа CarPlay в Dudu нужно разрешение поверх других приложений.</string>
