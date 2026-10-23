@@ -66,6 +66,27 @@ class WheelKeyServiceTest {
         WheelZoomSettings.assign(service, WheelZoomSettings.Role.NEXT, WheelKey(KeyEvent.KEYCODE_F5, 0, "?"))
     }
 
+    @Test fun duduModePassesAllWheelKeysEvenWhenDiPlayZoomAndJoystickAreConfigured() {
+        joystickSetUp()
+        AirPlayPersistence.saveDuduIntegration(service, true)
+        try {
+            assertEquals(false to false, press(KeyEvent.KEYCODE_F1))
+            assertEquals(false to false, press(KeyEvent.KEYCODE_F2))
+            assertEquals(false to false, press(KeyEvent.KEYCODE_F4))
+            assertEquals(false to false, press(KeyEvent.KEYCODE_F5))
+            assertTrue(knobs.isEmpty())
+        } finally { AirPlayPersistence.saveDuduIntegration(service, false) }
+    }
+
+    @Test fun aKeyStartedInDuduStaysPassedUntilReleasedWhenTheModeIsTurnedOff() {
+        AirPlayPersistence.saveDuduIntegration(service, true)
+        assertFalse(key(KeyEvent.KEYCODE_F1, true))
+        AirPlayPersistence.saveDuduIntegration(service, false)
+        assertFalse(key(KeyEvent.KEYCODE_F1, true, repeat = 1))
+        assertFalse(key(KeyEvent.KEYCODE_F1, false))
+        assertEquals(true to true, press(KeyEvent.KEYCODE_F1))
+    }
+
     private fun press(code: Int): Pair<Boolean, Boolean> = key(code, true) to key(code, false)
 
     private fun connect() {

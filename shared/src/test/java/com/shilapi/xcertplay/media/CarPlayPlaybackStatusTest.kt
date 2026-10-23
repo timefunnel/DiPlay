@@ -59,6 +59,7 @@ class CarPlayPlaybackStatusTest {
                 durationMillis = 257_000,
                 elapsedMillis = 12_500,
                 playing = true,
+                positionRevision = 1,
             ),
             status.acceptUpdate(update {
                 group(1) {
@@ -85,5 +86,13 @@ class CarPlayPlaybackStatusTest {
         assertNull(updated?.title)
         assertEquals(0x81, updated?.artworkTransferId)
         assertEquals(CarPlayNowPlaying(), status.clearAll())
+    }
+
+    @Test fun repeatedElapsedValueStillRefreshesThePhonesPositionAnchor() {
+        val status = CarPlayPlaybackStatus()
+        val packet = update { group(1) { u32(1, 1_000) } }
+        assertEquals(1L, status.acceptUpdate(packet)?.positionRevision)
+        assertEquals(2L, status.acceptUpdate(packet)?.positionRevision)
+        assertEquals(2L, status.acceptUpdate(update { group(0) { string(1, "Song") } })?.positionRevision)
     }
 }

@@ -1,0 +1,11 @@
+<resources>
+    <string name="settings_dudu_integration">Оболонка Dudu (експериментально)</string>
+    <string name="settings_dudu_full_carplay">Увесь CarPlay у картці мапи Dudu</string>
+    <string name="settings_dudu_full_carplay_description">Виберіть DiPlay у плагіні мап Dudu. Картка показує весь CarPlay із сенсорним керуванням. Зміна розміру зберігає з’єднання та пропорції. Кнопками керма керує Dudu.</string>
+    <string name="settings_dudu_music_setup">У Dudu виберіть DiPlay як джерело музики та дозвольте Dudu доступ до сповіщень. Інформація, обкладинка, стан і позиція надходять з iPhone. Команди відтворення, паузи й зміни треку передаються на iPhone. Перемотування недоступне. Для налаштувань DiPlay відкрийте CarPlay.</string>
+    <string name="settings_dudu_overlay_permission">Поверх інших вікон</string>
+    <string name="settings_dudu_overlay_permission_needed">Для показу CarPlay у Dudu потрібен дозвіл поверх інших програм.</string>
+    <string name="settings_dudu_music_permission">Музика Dudu: доступ</string>
+    <string name="settings_dudu_music_permission_unavailable">Сторінка доступу до сповіщень відсутня. Увімкніть доступ до музики в налаштуваннях Dudu.</string>
+    <string name="settings_dudu_overlay_failed">Не вдалося показати CarPlay. Перевірте дозвіл і картку мапи Dudu. Подробиці в журналі з’єднання.</string>
+</resources>

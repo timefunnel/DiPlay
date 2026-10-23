@@ -95,6 +95,7 @@ object AirPlayPersistence {
     private const val KEY_CLUSTER_PROJECTION_HELD = "geely_cluster_projection_held"
     private const val KEY_ADB_CLUSTER_ACTIVITY = "adb_cluster_activity_enabled"
     private const val KEY_CENTER_MAP_OVERLAY = "center_map_overlay"
+    private const val KEY_DUDU_INTEGRATION = "dudu_integration"
     private const val KEY_CENTER_MAP_AUTO_HIDE = "center_map_auto_hide"
     private const val KEY_LAUNCHER_MAP_SHARING = "launcher_map_sharing"
     private const val KEY_LAUNCHER_BUBBLE = "launcher_bubble"
@@ -875,6 +876,24 @@ object AirPlayPersistence {
     /** The dashboard map as a card on the centre screen while DiPlay is in the background. */
     fun loadCenterMapOverlay(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CENTER_MAP_OVERLAY, false)
+
+    fun loadDuduIntegration(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_DUDU_INTEGRATION, false)
+
+    fun saveDuduIntegration(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_DUDU_INTEGRATION, enabled).apply()
+        if (!enabled) DuduLauncher.clearRequest()
+        WheelKeyService.settingsChanged()
+    }
+
+    internal fun observeDuduIntegration(context: Context, changed: () -> Unit): () -> Unit {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_DUDU_INTEGRATION) changed()
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        return { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     /** Automatically hide the floating card when non-launcher apps are in the foreground. */
     fun loadCenterMapAutoHide(context: Context): Boolean =

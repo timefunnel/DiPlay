@@ -33,7 +33,7 @@ internal object CarPlayCallKeys {
             val app = context.applicationContext
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
-                    if (!BydOutputSettings.carPlayCallControls(context)) return
+                    if (AirPlayPersistence.loadDuduIntegration(context) || !BydOutputSettings.carPlayCallControls(context)) return
                     val keyCode = intent.getIntExtra(CarPlayCallKeyPolicy.EXTRA_KEYCODE, -1)
                     val controller = currentController()
                     val action = CarPlayCallKeyPolicy.onHangUpBroadcast(
@@ -61,7 +61,7 @@ internal object CarPlayCallKeys {
 
     /** Returns true when the key belongs to a CarPlay call and must not reach the car. */
     fun onKey(context: Context, keyCode: Int, down: Boolean, controller: CarPlayController? = currentController()): Boolean {
-        if (!BydOutputSettings.carPlayCallControls(context)) return false
+        if (AirPlayPersistence.loadDuduIntegration(context) || !BydOutputSettings.carPlayCallControls(context)) return false
         val action = CarPlayCallKeyPolicy.onKey(keyCode, down, BydNavigationOutputs.carPlayCall(), controller.hasSession())
         when (action) {
             CarPlayCallKeyPolicy.Action.PASS -> return false
@@ -81,7 +81,7 @@ internal object CarPlayCallKeys {
 
     private fun returnToCarPlay(app: Context) {
         handler.postDelayed({
-            if (!BydOutputSettings.carPlayCallControls(app) || !currentController().hasSession()) return@postDelayed
+            if (AirPlayPersistence.loadDuduIntegration(app) || !BydOutputSettings.carPlayCallControls(app) || !currentController().hasSession()) return@postDelayed
             runCatching {
                 app.startActivity(
                     Intent(app, CarPlayHostActivity::class.java)

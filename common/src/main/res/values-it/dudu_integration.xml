@@ -1,0 +1,11 @@
+<resources>
+    <string name="settings_dudu_integration">Launcher Dudu (sperimentale)</string>
+    <string name="settings_dudu_full_carplay">CarPlay completo nella scheda mappa di Dudu</string>
+    <string name="settings_dudu_full_carplay_description">Seleziona DiPlay nel componente mappe di Dudu. La scheda mostra tutto CarPlay con i comandi touch. Il ridimensionamento conserva connessione e proporzioni. Dudu gestisce i tasti al volante.</string>
+    <string name="settings_dudu_music_setup">In Dudu seleziona DiPlay come sorgente musicale e consenti a Dudu di accedere alle notifiche. Informazioni, copertina, stato e posizione provengono da iPhone. Riproduzione, pausa e cambio brano controllano iPhone. Lo spostamento della posizione non è disponibile. Apri CarPlay per usare le impostazioni DiPlay.</string>
+    <string name="settings_dudu_overlay_permission">Permesso sovrapposizione</string>
+    <string name="settings_dudu_overlay_permission_needed">Serve il permesso di visualizzazione sopra altre app per mostrare CarPlay in Dudu.</string>
+    <string name="settings_dudu_music_permission">Accesso musica Dudu</string>
+    <string name="settings_dudu_music_permission_unavailable">Non è disponibile una pagina per le notifiche. Abilita l’accesso alla musica nelle impostazioni Dudu.</string>
+    <string name="settings_dudu_overlay_failed">Impossibile mostrare CarPlay. Controlla il permesso e la scheda mappa Dudu. Dettagli nel registro di connessione.</string>
+</resources>

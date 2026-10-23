@@ -1,0 +1,11 @@
+<resources>
+    <string name="settings_dudu_integration">Duduランチャー（実験的機能）</string>
+    <string name="settings_dudu_full_carplay">Duduの地図カードにCarPlay全体を表示</string>
+    <string name="settings_dudu_full_carplay_description">Duduの地図プラグインでDiPlayを選択してください。カードにCarPlay全体を表示し、タッチ操作できます。サイズ変更時も接続と縦横比を維持します。ステアリングボタンはDuduが処理します。</string>
+    <string name="settings_dudu_music_setup">Duduで音楽ソースにDiPlayを選択し、Duduに通知へのアクセスを許可してください。曲情報、画像、再生状態、位置をiPhoneと同期し、再生、一時停止、曲送りをiPhoneへ送ります。再生位置のドラッグには対応していません。DiPlay設定はCarPlayを開いて操作してください。</string>
+    <string name="settings_dudu_overlay_permission">重ねて表示する権限</string>
+    <string name="settings_dudu_overlay_permission_needed">Dudu内にCarPlayを表示するには重ねて表示する権限が必要です。</string>
+    <string name="settings_dudu_music_permission">Duduの音楽アクセス</string>
+    <string name="settings_dudu_music_permission_unavailable">通知アクセス設定がありません。Duduの設定から音楽へのアクセスを有効にしてください。</string>
+    <string name="settings_dudu_overlay_failed">CarPlayを表示できませんでした。表示権限とDuduの地図カード設定を確認してください。詳細は接続ログにあります。</string>
+</resources>
