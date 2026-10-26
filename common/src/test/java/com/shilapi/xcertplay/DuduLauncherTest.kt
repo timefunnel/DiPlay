@@ -50,20 +50,17 @@ class DuduLauncherTest {
         assertNull(DuduLauncher.bounds(Intent(DuduLauncher.SHOW), 1920, 1080))
     }
 
-    @Test fun themeIsDeduplicatedAndOnlyPublishedForAnOptedInLiveSession() {
+    @Test fun cardRequestsDoNotBroadcastDayOrNightToTheLauncher() {
         val app = shadowOf(RuntimeEnvironment.getApplication())
         val initial = app.broadcastIntents.size
-        DuduLauncher.publishNight(context, false, false)
-        DuduLauncher.publishNight(context, false, true)
-        DuduLauncher.publishNight(context, false, true)
-        DuduLauncher.publishNight(context, true, true)
-        val sent = app.broadcastIntents.drop(initial)
-        assertEquals(2, sent.size)
-        assertEquals(listOf(37, 38), sent.map { it.getIntExtra("EXTRA_STATE", -1) })
-        assertTrue(sent.all { it.`package` == DuduLauncher.PACKAGE &&
-            it.action == "AUTONAVI_STANDARD_BROADCAST_SEND" && it.getIntExtra("KEY_TYPE", -1) == 10019 })
-        AirPlayPersistence.saveDuduIntegration(context, false)
-        DuduLauncher.publishNight(context, false, true)
-        assertEquals(initial + 2, app.broadcastIntents.size)
+        val display = context.getSystemService(android.view.WindowManager::class.java).defaultDisplay
+        shadowOf(display).setRealWidth(1920)
+        shadowOf(display).setRealHeight(1080)
+        DuduLauncher.receive(context, show())
+        DuduLauncher.receive(context, Intent(DuduLauncher.CLOSE))
+        DuduLauncher.receive(context, show())
+        assertTrue(app.broadcastIntents.drop(initial).none {
+            it.action == "AUTONAVI_STANDARD_BROADCAST_SEND" && it.getIntExtra("KEY_TYPE", -1) == 10019
+        })
     }
 }

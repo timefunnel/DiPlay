@@ -2,6 +2,8 @@ package com.shilapi.xcertplay
 
 import android.content.res.Configuration
 import com.shilapi.xcertplay.airplay.AirPlaySession
+import com.shilapi.xcertplay.media.AndroidMediaSink
+import com.shilapi.xcertplay.orchestration.CarPlayController
 import java.io.File
 import java.util.concurrent.ExecutorService
 import org.junit.After
@@ -13,10 +15,13 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.util.concurrent.PausedExecutorService
 import org.robolectric.annotation.Config
 
@@ -29,6 +34,7 @@ class CarPlayHostThemeDiagnosticsTest {
     private lateinit var commands: PausedExecutorService
 
     @Before fun setUp() {
+        AppLocale.save(RuntimeEnvironment.getApplication(), AppLocale.SIMPLIFIED_CHINESE)
         activity = Robolectric.buildActivity(CarPlayHostActivity::class.java).get()
         (getField("airPlayCommandExecutor") as ExecutorService).shutdownNow()
         commands = PausedExecutorService()
@@ -40,6 +46,9 @@ class CarPlayHostThemeDiagnosticsTest {
     }
 
     @After fun tearDown() {
+        activity.stopBackgroundThemeMonitoring()
+        CarPlayBackgroundSession.clear()
+        AirPlayPersistence.saveDuduIntegration(activity, false)
         commands.shutdownNow()
         (getField("teardownExecutor") as ExecutorService).shutdownNow()
         (getField("sessionLog") as SessionLogFile).close()
@@ -84,6 +93,41 @@ class CarPlayHostThemeDiagnosticsTest {
         verify(session, times(1)).setNightMode(false)
         verify(session, times(0)).setNightMode(true)
         assertTrue(logFile.readText().contains("reported=dark applied=light sessionActive=true"))
+    }
+
+    @Test @Config(sdk = [29, 32], qualifiers = "notnight")
+    fun backgroundSessionFollowsSystemChangesWithoutReconnectingOrReturningToFullScreen() {
+        val session = mock(AirPlaySession::class.java)
+        val phone = mock(CarPlayController::class.java)
+        val sink = mock(AndroidMediaSink::class.java)
+        setField("activeAirPlaySession", session)
+        setField("controller", phone)
+        setField("darkMode", false)
+        setField("lastConfiguration", Configuration(activity.resources.configuration))
+        AirPlayPersistence.saveDuduIntegration(activity, true)
+        CarPlayBackgroundSession.store(phone, sink, 1920, 1080, activity,
+            CarPlaySessionDisplay(1920, 1080, 0, true, true, 1920, 1080)) {}
+        activity.javaClass.getDeclaredMethod("updateThemeMonitoring")
+            .apply { isAccessible = true }.invoke(activity)
+        val poll = getField("pollConfiguration") as Runnable
+
+        RuntimeEnvironment.setQualifiers("+night")
+        poll.run()
+        commands.runAll()
+        assertEquals(true, getField("darkMode"))
+        verify(session, times(1)).setNightMode(true)
+
+        RuntimeEnvironment.setQualifiers("+notnight")
+        poll.run()
+        commands.runAll()
+        assertEquals(false, getField("darkMode"))
+        verify(session, times(1)).setNightMode(false)
+        assertTrue(session === getField("activeAirPlaySession"))
+        assertEquals(false, getField("isActivityStarted"))
+        verify(phone, never()).close()
+        assertTrue(shadowOf(RuntimeEnvironment.getApplication()).broadcastIntents.none {
+            it.action == "AUTONAVI_STANDARD_BROADCAST_SEND" && it.getIntExtra("KEY_TYPE", -1) == 10019
+        })
     }
 
     private fun refresh(mode: Int, source: ThemeModeDiagnostics.Source) {

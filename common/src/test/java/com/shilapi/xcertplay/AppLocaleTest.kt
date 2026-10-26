@@ -104,6 +104,23 @@ class AppLocaleTest {
         assertEquals("應用程式語言", wrapped.getString(R.string.language_app_language))
     }
 
+    @Test @Config(sdk = [29, 32])
+    fun legacyLanguageOverrideKeepsFollowingSystemDayAndNightChanges() {
+        RuntimeEnvironment.setQualifiers("+notnight")
+        AppLocale.save(context, AppLocale.SIMPLIFIED_CHINESE)
+        val wrapped = AppLocale.wrap(context)
+        assertEquals(false, nightModeOrNull(wrapped.resources.configuration.uiMode))
+
+        RuntimeEnvironment.setQualifiers("+night")
+        assertEquals(true, nightModeOrNull(context.resources.configuration.uiMode))
+        assertEquals(true, nightModeOrNull(wrapped.resources.configuration.uiMode))
+        assertEquals("zh", wrapped.resources.configuration.locales[0].language)
+
+        RuntimeEnvironment.setQualifiers("+notnight")
+        assertEquals(false, nightModeOrNull(wrapped.resources.configuration.uiMode))
+        assertEquals("zh", wrapped.resources.configuration.locales[0].language)
+    }
+
     @Test fun japaneseIsSelectableOnAndroid13() {
         AppLocale.save(context, AppLocale.JAPANESE)
         assertEquals("ja", manager.applicationLocales.toLanguageTags())

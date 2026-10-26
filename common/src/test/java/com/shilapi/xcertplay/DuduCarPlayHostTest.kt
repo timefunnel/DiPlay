@@ -22,6 +22,7 @@ import org.junit.runner.RunWith
 import org.mockito.Mockito.*
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
@@ -110,6 +111,50 @@ class DuduCarPlayHostTest {
         assertFalse(overlay.shown)
         assertEquals(CarPlayViewAreas.Kind.FULL_SCREEN, areas.kindOf(areas.current))
         verify(phone, times(2)).showViewArea(anyInt())
+        verify(phone, never()).close()
+    }
+
+    @Test fun cardEntryLayoutUpdatesAndThemeChangesDoNotOverrideTheLaunchersOwnTheme() {
+        val areas = CarPlayViewAreas.build(1920, 1080, CarPlayDock.AUTOMATIC, null,
+            duduWindow = 1328f / 1920 to 1012f / 1080)!!
+        set("sessionDisplay", display.copy(viewAreas = areas))
+        `when`(phone.showViewArea(anyInt())).thenReturn(true)
+        `when`(phone.activeAirPlaySessionToken()).thenReturn(Any())
+        val overlay = prepareOverlay()
+        set("darkMode", false)
+        request(1328, 1012)
+        val app = shadowOf(RuntimeEnvironment.getApplication())
+        val initial = app.broadcastIntents.size
+        fun themeBroadcasts() = app.broadcastIntents.drop(initial)
+            .filter { it.action == "AUTONAVI_STANDARD_BROADCAST_SEND" && it.getIntExtra("KEY_TYPE", -1) == 10019 }
+
+        update()
+        assertTrue(overlay.shown)
+        assertTrue(themeBroadcasts().isEmpty())
+        update()
+        request(1328, 1012, 5)
+        update()
+        assertTrue(themeBroadcasts().isEmpty())
+
+        set("menuOpen", true)
+        update()
+        assertFalse(overlay.shown)
+        set("menuOpen", false)
+        update()
+        assertTrue(overlay.shown)
+        assertTrue(themeBroadcasts().isEmpty())
+
+        set("darkMode", true)
+        update()
+        assertTrue(themeBroadcasts().isEmpty())
+        set("allowDuduOverlay", false)
+        update()
+        assertFalse(overlay.shown)
+        set("allowDuduOverlay", true)
+        update()
+        assertTrue(overlay.shown)
+        update()
+        assertTrue(themeBroadcasts().isEmpty())
         verify(phone, never()).close()
     }
 

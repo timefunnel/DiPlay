@@ -618,7 +618,6 @@ class CarPlayHostActivity : ComponentActivity() {
                 appendLog("CarPlay switched to ${if (night) "night" else "day"} mode")
                 logThemeState(nightModeDiagnosticSource, resources.configuration)
                 syncAirPlayDarkMode(nightModeDiagnosticSource)
-                publishDuduNight()
             },
         )
     }
@@ -1855,10 +1854,6 @@ class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
-    private fun publishDuduNight() {
-        DuduLauncher.publishNight(this, darkMode, controller?.activeAirPlaySessionToken() != null)
-    }
-
     private fun refreshNightSettings() {
         val mode = AirPlayPersistence.loadCarPlayNightMode(this)
         val threshold = AirPlayPersistence.loadAmbientLightThreshold(this)
@@ -1926,7 +1921,6 @@ class CarPlayHostActivity : ComponentActivity() {
             carPlayOverlay?.hide()
             restoreDuduFullScreen()
         }
-        publishDuduNight()
     }
 
     private fun cancelDuduResize() {

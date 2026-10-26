@@ -12,7 +12,6 @@ import android.view.WindowManager
 internal object DuduLauncher {
     const val SHOW = "com.autonavi.plus.showmap"
     const val CLOSE = "com.autonavi.plus.closemap"
-    const val PACKAGE = "com.dudu.autoui"
     private val listeners = mutableSetOf<() -> Unit>()
     var requestedBounds: Rect? = null
         private set
@@ -22,7 +21,6 @@ internal object DuduLauncher {
             field = value
             changed()
         }
-    private var lastNight: Boolean? = null
     private const val SIZE_PREFS = "diplay_dudu_card"
 
     /** A close request hides the card, but its last measured size is needed at the next handshake. */
@@ -49,7 +47,6 @@ internal object DuduLauncher {
 
     fun clearRequest() {
         requestedBounds = null
-        lastNight = null
         changed()
     }
 
@@ -66,8 +63,6 @@ internal object DuduLauncher {
                     Log.w("DiPlay-Dudu", "Rejected showmap: missing, invalid or off-screen bounds")
                     return
                 }
-                // A newly visible/restarted launcher may have missed the previous theme announcement.
-                if (requestedBounds == null) lastNight = null
                 requestedBounds = bounds
                 rememberSize(context, bounds, metrics.widthPixels, metrics.heightPixels)
                 changed()
@@ -87,20 +82,6 @@ internal object DuduLauncher {
         val bottom = intent.getIntExtra("h", -1)
         return if (x >= 0 && y >= 0 && right > x && bottom > y &&
             right <= screenWidth && bottom <= screenHeight) Rect(x, y, right, bottom) else null
-    }
-
-    fun publishNight(context: Context, night: Boolean, sessionActive: Boolean) {
-        if (!sessionActive || !AirPlayPersistence.loadDuduIntegration(context)) {
-            lastNight = null
-            return
-        }
-        if (lastNight == night) return
-        context.sendBroadcast(Intent("AUTONAVI_STANDARD_BROADCAST_SEND")
-            .setPackage(PACKAGE)
-            .putExtra("KEY_TYPE", 10019)
-            .putExtra("EXTRA_STATE", if (night) 38 else 37))
-        lastNight = night
-        Log.i("DiPlay-Dudu", "Day/night status sent: ${if (night) "night" else "day"}")
     }
 
     private fun changed() = listeners.toList().forEach { it() }

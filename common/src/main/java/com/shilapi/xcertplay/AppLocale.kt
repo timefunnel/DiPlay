@@ -82,7 +82,9 @@ object AppLocale {
             return context
         }
         val locale = locale(preference(context)) ?: return context
-        val configuration = Configuration(context.resources.configuration).apply {
+        // Override language only: copying the full configuration freezes uiMode and other
+        // system changes in this context, including while CarPlay runs in a launcher card.
+        val configuration = Configuration().apply {
             setLocale(locale)
             setLayoutDirection(locale)
         }
