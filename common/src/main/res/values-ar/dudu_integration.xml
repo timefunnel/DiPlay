@@ -1,0 +1,11 @@
+<resources>
+    <string name="settings_dudu_integration">واجهة Dudu (تجريبي)</string>
+    <string name="settings_dudu_full_carplay">عرض CarPlay بالكامل في بطاقة خريطة Dudu</string>
+    <string name="settings_dudu_full_carplay_description">اختر DiPlay في إضافة خرائط Dudu لعرض شاشة CarPlay كاملة والتحكم بها وفق نسبة أبعاد البطاقة. عند معرفة حجم البطاقة لأول مرة أو تغيير نسبة أبعادها، يعاد الاتصال تلقائيًا مع انقطاع قصير. يظل الاتصال قائمًا عند التبديل بين تخطيطي ملء الشاشة والبطاقة المعلنين. يدير Dudu أزرار المقود.</string>
+    <string name="settings_dudu_music_setup">اختر DiPlay كمصدر الموسيقى في Dudu وامنح Dudu صلاحية الوصول إلى الإشعارات. تتزامن معلومات الأغنية والغلاف وحالة التشغيل والموضع من iPhone. تعود أوامر التشغيل والإيقاف المؤقت وتغيير الأغنية إلى iPhone. لا يتوفر تقديم موضع التشغيل. افتح CarPlay لاستخدام إعدادات DiPlay.</string>
+    <string name="settings_dudu_overlay_permission">إذن التراكب</string>
+    <string name="settings_dudu_overlay_permission_needed">يلزم إذن العرض فوق التطبيقات لعرض CarPlay في Dudu.</string>
+    <string name="settings_dudu_music_permission">إذن موسيقى Dudu</string>
+    <string name="settings_dudu_music_permission_unavailable">لا توجد صفحة إعدادات الوصول إلى الإشعارات. فعّل الوصول إلى الموسيقى من إعدادات Dudu.</string>
+    <string name="settings_dudu_overlay_failed">تعذر عرض نافذة CarPlay. تحقق من إذن العرض فوق التطبيقات وإعدادات بطاقة الخريطة في Dudu. التفاصيل في سجل الاتصال.</string>
+</resources>

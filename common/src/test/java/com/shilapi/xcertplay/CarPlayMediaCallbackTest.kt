@@ -171,6 +171,7 @@ class CarPlayMediaCallbackTest {
     fun positionAndPlayStateDoNotRepublishMetadata() {
         val song = CarPlayNowPlaying(title = "Song", artist = "Artist", artworkTransferId = 7, elapsedMillis = 1_000, playing = true)
         assertEquals(false, CarPlayMediaKeys.metadataChanged(song, song.copy(elapsedMillis = 1_450)))
+        assertEquals(false, CarPlayMediaKeys.metadataChanged(song, song.copy(positionRevision = 1)))
         assertEquals(false, CarPlayMediaKeys.metadataChanged(song, song.copy(playing = false)))
         assertEquals(true, CarPlayMediaKeys.metadataChanged(song, song.copy(title = "Next")))
         assertEquals(true, CarPlayMediaKeys.metadataChanged(song, song.copy(artworkTransferId = 8)))

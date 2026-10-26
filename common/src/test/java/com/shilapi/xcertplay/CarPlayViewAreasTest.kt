@@ -9,6 +9,50 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CarPlayViewAreasTest {
+    @Test fun duduCardDeclaresItsShapeAndKeepsTheFullScreenAsInitialLayout() {
+        val areas = CarPlayViewAreas.build(1920, 1080, CarPlayDock.AUTOMATIC, null,
+            duduWindow = 1328f / 1920 to 1012f / 1080)!!
+        assertEquals(Kind.FULL_SCREEN, areas.kindOf(areas.current))
+        val card = areas.duduCard(1328, 1012, portrait = false)!!
+        assertEquals(Kind.DUDU_CARD, areas.kindOf(card))
+        assertEquals(card, areas.duduCard(664, 506, portrait = false))
+        assertNull(areas.duduCard(1200, 500, portrait = false))
+        assertNull(areas.duduCard(1328, 1012, portrait = true))
+        assertEquals(false, areas.turnsWithScreen)
+    }
+
+    @Test fun duduCardTallerThanTheActivityFitsInsideNativeAndScaledCanvases() {
+        for ((width, height) in listOf(1920 to 990, 1280 to 660)) {
+            val areas = CarPlayViewAreas.build(width, height, CarPlayDock.AUTOMATIC, null,
+                duduWindow = 1328f / 1920 to 1012f / 990)!!
+            val card = areas.areas[areas.duduCard(1328, 1012, portrait = false)!!]
+            org.junit.Assert.assertTrue(card.width <= width && card.height <= height)
+            assertEquals(0, card.width % 2)
+            assertEquals(0, card.height % 2)
+            assertEquals(1328.0 / 1012, card.width.toDouble() / card.height, .004)
+        }
+    }
+
+    @Test fun duduCardKeepsItsLayoutWhenMovingTheDock() {
+        val areas = CarPlayViewAreas.build(1920, 1080, CarPlayDock.BOTTOM, null,
+            duduWindow = 1328f / 1920 to 1012f / 1080)!!
+        areas.use(areas.duduCard(1328, 1012, portrait = false)!!)
+        val moved = areas.withDock(DOCK_EDGE_DRIVER_SIDE)!!
+        assertEquals(Kind.DUDU_CARD, areas.kindOf(moved))
+        assertEquals(DOCK_EDGE_DRIVER_SIDE, areas.areas[moved].dockEdge)
+        areas.use(moved)
+        assertEquals(moved, areas.duduCard(1328, 1012, portrait = false))
+    }
+
+    @Test fun duduCardOnATurningScreenBelongsOnlyToItsMeasuredOrientation() {
+        val areas = CarPlayViewAreas.build(1920, 1920, listOf(
+            CarPlayViewAreas.Screen(1920, 1080, false), CarPlayViewAreas.Screen(1080, 1920, true)),
+            CarPlayDock.AUTOMATIC, splitWindow = { null }, startPortrait = false,
+            duduWindow = { if (it) null else 1328f / 1920 to 1012f / 1080 })!!
+        org.junit.Assert.assertNotNull(areas.duduCard(1328, 1012, false))
+        assertNull(areas.duduCard(1328, 1012, true))
+    }
+
     // On a Tang, BYD's split screen gives DiPlay 1270x1208 of the 2560x1440 screen.
     private val split = 1270f / 2560 to 1208f / 1440
 

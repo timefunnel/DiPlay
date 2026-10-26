@@ -1,0 +1,11 @@
+<resources>
+    <string name="settings_dudu_integration">嘟嘟桌面（实验性）</string>
+    <string name="settings_dudu_full_carplay">在嘟嘟地图卡片显示完整 CarPlay</string>
+    <string name="settings_dudu_full_carplay_description">在嘟嘟高德地图插件中选择 DiPlay，卡片内显示并操作整个 CarPlay，按卡片比例自动排版。首次获取卡片尺寸或改为新比例时会自动重连，短暂中断 CarPlay；已适配的全屏与卡片布局之间切换保持连接。方控交给嘟嘟，DiPlay 提供日夜状态和标准音乐会话。</string>
+    <string name="settings_dudu_music_setup">在嘟嘟中把音乐来源设为 DiPlay，并为嘟嘟开启通知读取权限。歌曲信息、封面、播放状态和进度来自手机；播放、暂停和切歌操作转回手机。进度仅显示，暂不支持拖动跳转。DiPlay 设置请在全屏 CarPlay 中操作。</string>
+    <string name="settings_dudu_overlay_permission">悬浮窗权限</string>
+    <string name="settings_dudu_overlay_permission_needed">需要悬浮窗权限才能在嘟嘟中显示 CarPlay。</string>
+    <string name="settings_dudu_music_permission">嘟嘟音乐读取权限</string>
+    <string name="settings_dudu_music_permission_unavailable">此车机没有通知使用权设置页面，请从嘟嘟设置中开启音乐读取权限。</string>
+    <string name="settings_dudu_overlay_failed">CarPlay 悬浮显示失败，请检查悬浮窗权限和嘟嘟地图卡片设置；具体原因已写入连接日志。</string>
+</resources>

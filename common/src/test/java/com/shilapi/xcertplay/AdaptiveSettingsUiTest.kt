@@ -48,6 +48,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowAlertDialog
@@ -822,6 +823,52 @@ class AdaptiveSettingsUiTest {
 
     @Test @Config(sdk = [29], qualifiers = "ja-w320dp-h600dp")
     fun navigationSliderScreenshotCompactJapaneseLargeFont() = captureNavigationSlider("compact-ja", 1.3f)
+
+    @Test @Config(sdk = [29], qualifiers = "zh-rCN-w320dp-h700dp-xhdpi")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun duduScreenshotCompactLargeFont() = captureDuduSettings("compact-zh")
+
+    @Test @Config(sdk = [29], qualifiers = "en-w1000dp-h700dp-xhdpi")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun duduScreenshotExpandedLargeFont() = captureDuduSettings("expanded-en")
+
+    @Test @Config(sdk = [29], qualifiers = "ar-ldrtl-w320dp-h700dp-xhdpi")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun duduScreenshotArabicLargeFont() = captureDuduSettings("compact-ar-rtl")
+
+    private fun captureDuduSettings(name: String) {
+        RuntimeEnvironment.setFontScale(1.3f)
+        context.applicationInfo.flags = context.applicationInfo.flags or ApplicationInfo.FLAG_SUPPORTS_RTL
+        AirPlayPersistence.saveDuduIntegration(context, true)
+        val screen = openSettings()
+        screen.window.decorView.layoutDirection = screen.resources.configuration.layoutDirection
+        ReflectionHelpers.setField(screen, "settingsCategory", SettingsCategory.ADVANCED)
+        ReflectionHelpers.callInstanceMethod<Unit>(screen, "render")
+        layoutRoot(screen)
+        val heading = texts(screen).single { it.text == screen.getString(R.string.settings_dudu_integration) }
+        // Capture the actual, measured card in full, including content below the scroll viewport.
+        val card = heading.parent.parent as ViewGroup
+        val cardViews = descendants(card).toList()
+        assertTrue(cardViews.filterIsInstance<TextView>().any { it.text == screen.getString(R.string.settings_dudu_full_carplay) })
+        assertTrue(card.width > 0 && card.width <= screen.resources.displayMetrics.widthPixels)
+        for (text in cardViews.filterIsInstance<TextView>()) {
+            val layout = text.layout ?: continue
+            for (line in 0 until layout.lineCount) {
+                assertEquals("Truncated Dudu setting: ${text.text}", 0, layout.getEllipsisCount(line))
+            }
+            assertTrue("Clipped Dudu setting: ${text.text}",
+                layout.height <= text.height - text.compoundPaddingTop - text.compoundPaddingBottom)
+        }
+        val bitmap = Bitmap.createBitmap(card.width, card.height, Bitmap.Config.ARGB_8888)
+        try {
+            card.draw(Canvas(bitmap))
+            val output = Paths.get("build/reports/dudu-ui/$name.png")
+            Files.createDirectories(output.parent)
+            Files.newOutputStream(output).use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        } finally {
+            bitmap.recycle()
+        }
+    }
 
     @Test @Config(sdk = [29], qualifiers = "en-w1000dp-h700dp")
     fun navigationSliderScreenshotExpandedLargeFont() = captureNavigationSlider("expanded-en", 1.3f)

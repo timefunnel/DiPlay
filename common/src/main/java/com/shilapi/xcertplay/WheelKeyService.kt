@@ -45,6 +45,8 @@ class WheelKeyService : AccessibilityService() {
     private val navigationKeys = NavigationWheelKeyPolicy()
     private val joystick = WheelJoystick()
     private val siriKey = WheelSiriKey()
+    // Preserve the whole press passed to Dudu when this preference changes while held.
+    private val duduPresses = WheelKeyPresses()
     /** A remapped media key is handled by the same accessibility input filter as the Siri key. */
     internal var sendMedia: (Int) -> Boolean = { index ->
         CarPlayBackgroundSession.snapshot()?.controller?.sendMediaButton(index) == true
@@ -189,6 +191,12 @@ class WheelKeyService : AccessibilityService() {
             return true
         }
         if (navigationKeys.owns(event.keyCode, event.deviceId, event.downTime)) return navigationKey(event)
+        if (duduPresses.filter(physicalKey, down, event.repeatCount == 0) {
+                if (AirPlayPersistence.loadDuduIntegration(this)) WheelZoomKeys.Action.CONSUME else WheelZoomKeys.Action.PASS
+            } != WheelZoomKeys.Action.PASS) {
+            refreshEligibility()
+            return false
+        }
         if (CarPlayCallKeys.onKey(this, event.keyCode, down)) return true
         val key = WheelKey.of(event)
         if (BydOutputSettings.carPlayCallControls(this) &&
@@ -351,6 +359,15 @@ class WheelKeyService : AccessibilityService() {
     private fun eligibleRoute(): Any? = if (WheelZoomSettings.enabled(this)) mapRoute() else null
 
     private fun refreshEligibility() {
+        if (AirPlayPersistence.loadDuduIntegration(this)) {
+            clearLearning()
+            clearDoubleSiri()
+            keys.updateEligibility(null)
+            if (joystick.end()) joystickEnded()
+            stopJoystickTimers()
+            handler.removeCallbacks(endTimedMode)
+            return
+        }
         val joystickAllowed = WheelZoomSettings.joystick(this)
         if (!WheelZoomSettings.anyEnabled(this)) clearLearning()
         if (keys.updateEligibility(eligibleRoute())) handler.removeCallbacks(endTimedMode)
@@ -589,7 +606,8 @@ class WheelKeyService : AccessibilityService() {
                 Settings.Secure.getInt(context.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0) == 1
         }
 
-        internal fun needsRestore(context: Context): Boolean = !connected() && wanted(context)
+        internal fun needsRestore(context: Context): Boolean =
+            !AirPlayPersistence.loadDuduIntegration(context) && !connected() && wanted(context)
 
         /**
          * The call controls need the service too: outside the CarPlay screen the call key reaches DiPlay

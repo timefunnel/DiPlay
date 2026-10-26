@@ -19,7 +19,7 @@ class CarPlayViewAreas private constructor(
     initial: Int,
 ) {
     /** What an area is for; SIDE_PANEL is CarPlay beside DiPlay's panel and is only chosen on request. */
-    enum class Kind { FULL_SCREEN, SPLIT_SCREEN, SIDE_PANEL }
+    enum class Kind { FULL_SCREEN, SPLIT_SCREEN, SIDE_PANEL, DUDU_CARD }
 
     /** A full screen the canvas holds: its size and whether the screen is portrait then. */
     data class Screen(val width: Int, val height: Int, val portrait: Boolean)
@@ -35,6 +35,16 @@ class CarPlayViewAreas private constructor(
     val turnsWithScreen: Boolean = slots.any { it.portrait } && slots.any { !it.portrait }
 
     fun kindOf(index: Int): Kind = slots[index].kind
+
+    /** Encoder alignment can round each edge by up to two pixels; a new shape needs a new handshake. */
+    fun duduCard(width: Int, height: Int, portrait: Boolean): Int? {
+        if (width <= 0 || height <= 0) return null
+        val index = index(Kind.DUDU_CARD, portrait, areas[current].dockEdge) ?: return null
+        val area = areas[index]
+        val mismatch = abs(area.width.toDouble() / area.height / (width.toDouble() / height) - 1.0)
+        val rounding = 2.0 / area.width + 2.0 / area.height + 2.0 / width + 2.0 / height
+        return index.takeIf { mismatch <= rounding }
+    }
 
     /** The area of [kind] with [dockEdge] (or the edge-less one) on the current screen, or null. */
     fun index(kind: Kind, dockEdge: Int?): Int? = index(kind, slots[current].portrait, dockEdge)
@@ -118,10 +128,11 @@ class CarPlayViewAreas private constructor(
             splitWindow: Pair<Float, Float>?,
             sidePanel: Boolean = false,
             rightHandDrive: Boolean = false,
+            duduWindow: Pair<Float, Float>? = null,
         ): CarPlayViewAreas? =
             build(width, height, listOf(Screen(width, height, portrait = height > width)), dock,
                 splitWindow = { splitWindow }, startPortrait = height > width, sidePanel = sidePanel,
-                rightHandDrive = rightHandDrive)
+                rightHandDrive = rightHandDrive, duduWindow = { duduWindow })
 
         /**
          * The areas for a [canvasWidth] x [canvasHeight] stream holding [screens] (each at its top-left
@@ -139,10 +150,12 @@ class CarPlayViewAreas private constructor(
             startPortrait: Boolean,
             sidePanel: Boolean = false,
             rightHandDrive: Boolean = false,
+            duduWindow: (portrait: Boolean) -> Pair<Float, Float>? = { null },
         ): CarPlayViewAreas? {
             val splits = screens.associateWith { splitWindow(it.portrait) }
+            val cards = screens.associateWith { duduWindow(it.portrait) }
             if (screens.size == 1 && dock.edge == null && splits.values.all { it == null } && !sidePanel &&
-                screens[0].width == canvasWidth && screens[0].height == canvasHeight) return null
+                cards.values.all { it == null } && screens[0].width == canvasWidth && screens[0].height == canvasHeight) return null
             val edges = dock.edge?.let { listOf(AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE, AirPlayInfoPlist.DOCK_EDGE_BOTTOM) }
                 ?: listOf(null)
             val areas = mutableListOf<AirPlayViewArea>()
@@ -152,6 +165,18 @@ class CarPlayViewAreas private constructor(
                 slots += Slot(Kind.FULL_SCREEN, screen.portrait)
             }
             for (screen in screens) {
+                cards[screen]?.let { card ->
+                    require(card.first > 0 && card.second > 0 && card.first.isFinite() && card.second.isFinite())
+                    // A launcher card can be taller than the Activity's window (different system bars).
+                    // Fit its complete shape inside the negotiated canvas, rounding only for the encoder.
+                    val scale = minOf(1f, 1f / card.first, 1f / card.second)
+                    val width = (screen.width * card.first * scale).toInt().coerceIn(2, screen.width) and 1.inv()
+                    val height = (screen.height * card.second * scale).toInt().coerceIn(2, screen.height) and 1.inv()
+                    for (edge in edges) {
+                        areas += AirPlayViewArea(width, height, dockEdge = edge)
+                        slots += Slot(Kind.DUDU_CARD, screen.portrait)
+                    }
+                }
                 val window = splits[screen] ?: continue
                 // The window's own size (BYD shows its bars in split screen), kept even for the encoder.
                 val splitWidth = (screen.width * window.first).toInt().coerceIn(2, screen.width) and 1.inv()

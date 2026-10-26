@@ -15,13 +15,14 @@
     <!-- Optional: diagnostic reports in the visible Downloads/DiPlay folder on Android 9.
          Android 10+ needs no permission for this, so it is never requested there. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <!-- Optional: the dashboard map as a card over the home screen. -->
+    <!-- Optional: dashboard map card or full CarPlay screen in Dudu's map rectangle. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Optional, owner-enabled Usage Access for the verified DiLink 5.1 cluster profile. -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <!-- The centre card also follows whichever launcher is the default home. -->
     <queries>
         <package android:name="com.byd.carsettings" />
+        <package android:name="com.dudu.autoui" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="content" android:mimeType="application/vnd.android.package-archive" />
@@ -36,6 +37,12 @@
         </intent>
     </queries>
     <application>
+        <receiver android:name="com.shilapi.xcertplay.DuduMapReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="com.autonavi.plus.showmap" />
+                <action android:name="com.autonavi.plus.closemap" />
+            </intent-filter>
+        </receiver>
         <provider
             android:name="com.shilapi.xcertplay.CrashRecordInstaller"
             android:authorities="${applicationId}.crash-record"

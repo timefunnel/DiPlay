@@ -14,6 +14,11 @@ data class CarPlayNowPlaying(
     val durationMillis: Long? = null,
     val elapsedMillis: Long? = null,
     val playing: Boolean = false,
+    /** Advances only when the phone actually supplies an elapsed-time field, including equal values. */
+    val positionRevision: Long = 0,
+    val persistentId: Long? = null,
+    /** First title supplied for this media item; later title updates may contain lyrics. */
+    val trackTitle: String? = null,
 )
 
 /**
@@ -34,15 +39,28 @@ class CarPlayPlaybackStatus {
         val media = runCatching { body.optionalGroup(MEDIA_ITEM) }.getOrNull()
         val playback = runCatching { body.optionalGroup(PLAYBACK) }.getOrNull()
         val previous = nowPlaying
+        val elapsed = playback.updatedU32(ELAPSED, null)
+        // A zero identifier cannot distinguish media items; leave those sources on track metadata.
+        val persistentId = media.updatedU64(PERSISTENT_ID, previous.persistentId)?.takeUnless { it == 0L }
+        val title = media.updatedString(TITLE, previous.title)
+        val trackTitle = when {
+            persistentId == null -> null
+            persistentId != previous.persistentId -> if (media?.has(TITLE) == true) title else null
+            previous.trackTitle == null && media?.has(TITLE) == true -> title
+            else -> previous.trackTitle
+        }
         val next = previous.copy(
-            title = media.updatedString(TITLE, previous.title),
+            title = title,
+            persistentId = persistentId,
+            trackTitle = trackTitle,
             album = media.updatedString(ALBUM, previous.album),
             artist = media.updatedString(ARTIST, previous.artist),
             artworkTransferId = media.updatedU8(ARTWORK_TRANSFER_ID, previous.artworkTransferId),
             sourceApp = playback.updatedString(SOURCE_APP, previous.sourceApp),
             durationMillis = media.updatedU32(DURATION, previous.durationMillis),
-            elapsedMillis = playback.updatedU32(ELAPSED, previous.elapsedMillis),
+            elapsedMillis = elapsed ?: previous.elapsedMillis,
             playing = playback.updatedStatus(previous.playing),
+            positionRevision = previous.positionRevision + if (elapsed != null) 1 else 0,
         )
         if (next == previous) return null
         nowPlaying = next
@@ -80,6 +98,11 @@ class CarPlayPlaybackStatus {
         return runCatching { u32(id) }.getOrElse { previous }
     }
 
+    private fun Iap2BodyReader?.updatedU64(id: Int, previous: Long?): Long? {
+        if (this == null || !has(id)) return previous
+        return runCatching { u64(id) }.getOrElse { previous }
+    }
+
     private fun Iap2BodyReader?.updatedU8(id: Int, previous: Int?): Int? {
         if (this == null || !has(id)) return previous
         return runCatching { u8(id) }.getOrElse { previous }
@@ -95,6 +118,7 @@ class CarPlayPlaybackStatus {
         private const val MEDIA_ITEM = 0
         private const val PLAYBACK = 1
 
+        private const val PERSISTENT_ID = 0
         private const val TITLE = 1
         private const val DURATION = 4
         private const val ALBUM = 6

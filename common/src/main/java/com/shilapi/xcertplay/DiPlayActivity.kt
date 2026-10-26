@@ -129,6 +129,7 @@ internal enum class SettingsSection {
     LOCATION,
     CLUSTER_MAP,
     LAUNCHER_BUBBLE,
+    DUDU_INTEGRATION,
     BYD_NAVIGATION,
     PERMISSIONS_AND_HELP,
     LANGUAGE,
@@ -158,6 +159,7 @@ internal object SettingsInformationArchitecture {
         SettingsCategory.ADVANCED to setOf(
             SettingsSection.CLUSTER_MAP,
             SettingsSection.LAUNCHER_BUBBLE,
+            SettingsSection.DUDU_INTEGRATION,
             SettingsSection.EXPERIMENTAL_DISPLAY,
             SettingsSection.ADVANCED_MEDIA,
             SettingsSection.NAVIGATION_WHEEL,
@@ -502,6 +504,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
 
     override fun onStart() {
         super.onStart()
+        DuduLauncher.settingsVisible = true
         // Results from the image picker and crop screens arrive before onResume.
         enforceInterfaceSize()
         CenterMapOverlay.onDiPlayScreenShown()
@@ -514,6 +517,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         clusterSafeAreaDialog?.dismiss()
         startupHotspotCancelled = true
         super.onStop()
+        DuduLauncher.settingsVisible = false
         if (!isFinishing && !isChangingConfigurations) {
             CenterMapOverlay.scheduleShow()
             LauncherBubble.scheduleShow()
@@ -2131,6 +2135,26 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 getString(R.string.sends_precise_android_location_as_carplay_gps_data_when_th),
                 AirPlayPersistence.loadLocationReportingEnabled(this), save = ::onLocationReportingChanged)
             card.addView(label(getString(R.string.location_reporting_reconnects), 14, MUTED))
+        }
+        filteredSection(content, SettingsSection.DUDU_INTEGRATION,
+            getString(R.string.settings_dudu_integration), R.drawable.ic_dp_navigation) { card ->
+            toggle(card, getString(R.string.settings_dudu_full_carplay), getString(R.string.settings_dudu_full_carplay_description),
+                AirPlayPersistence.loadDuduIntegration(this)) {
+                AirPlayPersistence.saveDuduIntegration(this, it)
+                if (it && !CenterMapOverlay.permitted(this)) openOverlayPermission()
+                render()
+            }
+            if (AirPlayPersistence.loadDuduIntegration(this)) {
+                card.addView(choiceNote(getString(R.string.settings_dudu_music_setup)))
+                card.addView(choiceNote(getString(if (CenterMapOverlay.permitted(this)) R.string.center_map_overlay_allowed
+                    else R.string.settings_dudu_overlay_permission_needed)))
+                card.addView(button(getString(R.string.settings_dudu_overlay_permission), false) { openOverlayPermission() }, matchButton())
+                card.addView(button(getString(R.string.settings_dudu_music_permission), false) {
+                    val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                    if (intent.resolveActivity(packageManager) != null) startActivity(intent)
+                    else android.widget.Toast.makeText(this, R.string.settings_dudu_music_permission_unavailable, android.widget.Toast.LENGTH_LONG).show()
+                }, matchButton(SETTINGS_BLOCK_GAP_DP))
+            }
         }
         // A launcher shortcut. Some head units' launchers list only their own cards, so a normally
         // installed app never appears on the home screen; this app draws its own way back instead (#650).

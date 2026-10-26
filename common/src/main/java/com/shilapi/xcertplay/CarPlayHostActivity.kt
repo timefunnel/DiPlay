@@ -58,6 +58,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.Toast
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.HorizontalScrollView
@@ -328,6 +329,23 @@ open class CarPlayHostActivity : ComponentActivity() {
 
     // The full-window viewport stays independent of the letterboxed SurfaceView dimensions.
     private var videoView: View? = null
+    private var fullScreenRoot: FrameLayout? = null
+    private var carPlayOverlay: CarPlayOverlayHost? = null
+    private var stopDuduObservation: (() -> Unit)? = null
+    private var stopDuduSettingsObservation: (() -> Unit)? = null
+    private var pendingDuduSize: Pair<Int, Int>? = null
+    private val adaptDuduSize = Runnable {
+        val size = pendingDuduSize ?: return@Runnable
+        pendingDuduSize = null
+        val bounds = DuduLauncher.requestedBounds ?: return@Runnable
+        if (size != (bounds.width() to bounds.height()) || carPlayOverlay?.shown != true ||
+            isActivityStarted || isDestroyed || menuOpen || DuduLauncher.settingsVisible ||
+            safeAreaEditorActive || !AirPlayPersistence.loadDuduIntegration(this) ||
+            SCREEN_TYPE_MAIN !in activeScreenStreamTypes) return@Runnable
+        if (sessionDisplay?.viewAreas?.duduCard(size.first, size.second, screenPortrait()) != null) return@Runnable
+        releaseCarPlayTouches()
+        restartCarPlay("Dudu card changed to ${size.first}x${size.second}; negotiating its layout")
+    }
     private var blackCornerOverlay: CarPlayBlackCornerOverlay? = null
     private var pendingIphoneCornerMask: Pair<AirPlaySession, Pair<ByteArray, Int>>? = null
     private var iphoneCornerMaskDecodeGeneration = 0
@@ -484,6 +502,7 @@ open class CarPlayHostActivity : ComponentActivity() {
     private var homeMonitor: HomeScreenMonitor? = null
     private var homeScreenVisible: Boolean? = null
     private var isActivityStarted = false
+    private var allowDuduOverlay = false
     private val hideIdleCenterMap = Runnable {
         if (SCREEN_TYPE_ALT !in activeScreenStreamTypes) CenterMapOverlay.hide()
     }
@@ -758,9 +777,14 @@ open class CarPlayHostActivity : ComponentActivity() {
         }
     }
     // Some head units (e.g. BYD DiLink) update resources.configuration for day/night
-    // without delivering onConfigurationChanged, so poll while the activity is visible.
+    // without delivering onConfigurationChanged. Dudu also needs this while CarPlay is in the background.
     private val pollConfiguration = object : Runnable {
         override fun run() {
+            if (!isActivityStarted && !keepsBackgroundTheme()) {
+                nightModeController.pause()
+                return
+            }
+            refreshNightSettings()
             refreshConfiguration(source = ThemeModeDiagnostics.Source.POLL)
             mainHandler.postDelayed(this, CONFIGURATION_POLL_INTERVAL_MILLIS)
         }
@@ -887,6 +911,13 @@ open class CarPlayHostActivity : ComponentActivity() {
         loadPersistedSettings()
         locationPermissionAvailable = hasFineLocationPermission()
         setContentView(buildContentView())
+        stopDuduObservation = DuduLauncher.observe(::updateDuduOverlay)
+        stopDuduSettingsObservation = AirPlayPersistence.observeDuduIntegration(this) {
+            runOnUiThread {
+                updateDuduOverlay()
+                updateThemeMonitoring()
+            }
+        }
         applyFullscreenMode()
         onBackPressedDispatcher.addCallback(
             this,
@@ -1187,6 +1218,10 @@ open class CarPlayHostActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         isActivityStarted = true
+        allowDuduOverlay = false
+        cancelDuduResize()
+        carPlayOverlay?.hide()
+        restoreDuduFullScreen()
         logThemeState(ThemeModeDiagnostics.Source.START, resources.configuration)
         mainHandler.removeCallbacks(pollConfiguration)
         mainHandler.post(pollConfiguration)
@@ -1204,20 +1239,8 @@ open class CarPlayHostActivity : ComponentActivity() {
         WheelKeyService.restoreIfNeeded(this)
         hostAppearanceResumed = true
         updateCallPopupGuard()
-        val savedNightMode = AirPlayPersistence.loadCarPlayNightMode(this)
-        val savedThreshold = AirPlayPersistence.loadAmbientLightThreshold(this)
-        val savedDelay = AirPlayPersistence.loadAmbientDelaySeconds(this)
-        val savedSchedule = AirPlayPersistence.loadCarPlayNightSchedule(this)
         val systemNight = nightModeOrNull(resources.configuration.uiMode) ?: false
-        if (savedNightMode != carPlayNightMode || savedThreshold != ambientLightThreshold ||
-            savedDelay != ambientDelaySeconds || savedSchedule != nightSchedule) {
-            carPlayNightMode = savedNightMode
-            ambientLightThreshold = savedThreshold
-            ambientDelaySeconds = savedDelay
-            nightSchedule = savedSchedule
-            nightModeController.configure(carPlayNightMode, systemNight, ambientLightThreshold, ambientDelaySeconds,
-                nightSchedule)
-        }
+        refreshNightSettings()
         nightModeController.resume(systemNight)
         AppAppearanceRuntime.publishHost(this, darkMode)
         refreshAppAppearance()
@@ -1670,6 +1693,7 @@ open class CarPlayHostActivity : ComponentActivity() {
 
     // Hardware navigation belongs to the iPhone-rendered CarPlay UI, not Android View focus.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (AirPlayPersistence.loadDuduIntegration(this)) return super.dispatchKeyEvent(event)
         val physicalKey = Triple(event.deviceId, event.keyCode, event.scanCode)
         val downOrUp = event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP
         if (downOrUp && physicalKey in legacySiriPresses) {
@@ -1852,7 +1876,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         hostAppearanceResumed = false
         updateCallPopupGuard()
         AppAppearanceRuntime.clearHost(this)
-        nightModeController.pause()
+        if (!keepsBackgroundTheme()) nightModeController.pause()
         super.onPause()
     }
 
@@ -1861,9 +1885,11 @@ open class CarPlayHostActivity : ComponentActivity() {
         closePicturePanel()
         // The controller, USB/iAP2 link, and VPN attachment intentionally outlive the UI.
         isActivityStarted = false
+        allowDuduOverlay = !isFinishing && !isChangingConfigurations
         logThemeState(ThemeModeDiagnostics.Source.STOP, resources.configuration)
-        mainHandler.removeCallbacks(pollConfiguration)
         super.onStop()
+        updateThemeMonitoring()
+        updateDuduOverlay()
         // Off screen there are no system bars to hide, so a launch waiting for focus can go now.
         onClusterLaunchTick()
         if (!isFinishing && !isChangingConfigurations) {
@@ -1872,8 +1898,100 @@ open class CarPlayHostActivity : ComponentActivity() {
         }
     }
 
+    private fun refreshNightSettings() {
+        val mode = AirPlayPersistence.loadCarPlayNightMode(this)
+        val threshold = AirPlayPersistence.loadAmbientLightThreshold(this)
+        val delay = AirPlayPersistence.loadAmbientDelaySeconds(this)
+        val schedule = AirPlayPersistence.loadCarPlayNightSchedule(this)
+        if (mode != carPlayNightMode || threshold != ambientLightThreshold || delay != ambientDelaySeconds ||
+            schedule != nightSchedule) {
+            carPlayNightMode = mode
+            ambientLightThreshold = threshold
+            ambientDelaySeconds = delay
+            nightSchedule = schedule
+            nightModeController.configure(mode, nightModeOrNull(resources.configuration.uiMode) ?: false, threshold, delay, schedule)
+        }
+    }
+
+    private fun keepsBackgroundTheme(): Boolean = AirPlayPersistence.loadDuduIntegration(this) &&
+        CarPlayBackgroundSession.isOwner(this) && controller != null && !shuttingDown.get()
+
+    internal fun stopBackgroundThemeMonitoring() {
+        mainHandler.removeCallbacks(pollConfiguration)
+        nightModeController.pause()
+    }
+
+    private fun updateThemeMonitoring() {
+        mainHandler.removeCallbacks(pollConfiguration)
+        if (!shuttingDown.get() && (isActivityStarted || keepsBackgroundTheme())) {
+            nightModeController.resume(nightModeOrNull(resources.configuration.uiMode) ?: false)
+            mainHandler.post(pollConfiguration)
+        } else nightModeController.pause()
+    }
+
+    private fun updateDuduOverlay() {
+        if (isDestroyed) return
+        val enabled = AirPlayPersistence.loadDuduIntegration(this)
+        if (enabled) {
+            CenterMapOverlay.hide()
+            if (SCREEN_TYPE_MAIN in activeScreenStreamTypes) CarPlayMediaKeys.ensureDuduSession(this)
+        }
+        val bounds = DuduLauncher.requestedBounds
+        if (enabled && bounds != null && allowDuduOverlay && !isActivityStarted && !menuOpen &&
+            !safeAreaEditorActive && !DuduLauncher.settingsVisible &&
+            !isFinishing && !shuttingDown.get() && SCREEN_TYPE_MAIN in activeScreenStreamTypes) {
+            resetSidePanel()
+            carPlayOverlay?.show(bounds)
+            if (carPlayOverlay?.shown == true) {
+                val areas = sessionDisplay?.viewAreas
+                val target = areas?.duduCard(bounds.width(), bounds.height(), screenPortrait())
+                if (target != null) {
+                    cancelDuduResize()
+                    selectDuduViewArea(target)
+                } else if (!handshakeResetInProgress && controller != null) {
+                    val size = bounds.width() to bounds.height()
+                    if (pendingDuduSize != size) {
+                        cancelDuduResize()
+                        pendingDuduSize = size
+                        mainHandler.postDelayed(adaptDuduSize, DISPLAY_CHANGE_DEBOUNCE_MILLIS)
+                    }
+                }
+            } else {
+                cancelDuduResize()
+                restoreDuduFullScreen()
+            }
+        } else {
+            cancelDuduResize()
+            carPlayOverlay?.hide()
+            restoreDuduFullScreen()
+        }
+    }
+
+    private fun cancelDuduResize() {
+        mainHandler.removeCallbacks(adaptDuduSize)
+        pendingDuduSize = null
+    }
+
+    private fun selectDuduViewArea(target: Int) {
+        val areas = sessionDisplay?.viewAreas ?: return
+        if (target == areas.current) return
+        releaseCarPlayTouches()
+        val sent = controller?.showViewArea(target) == true
+        if (sent) areas.use(target)
+        appendLog("Dudu layout: view area $target kind=${areas.kindOf(target)} sent=$sent")
+        videoView?.let { updateVideoLayout(it.width, it.height) }
+    }
+
+    private fun restoreDuduFullScreen() {
+        val areas = sessionDisplay?.viewAreas ?: return
+        if (areas.kindOf(areas.current) != CarPlayViewAreas.Kind.DUDU_CARD) return
+        areas.index(CarPlayViewAreas.Kind.FULL_SCREEN, screenPortrait(), areas.areas[areas.current].dockEdge)
+            ?.let(::selectDuduViewArea)
+    }
+
     /** Shows the dashboard map as a card on the centre screen while DiPlay is in the background. */
     private fun showCenterMap() {
+        if (AirPlayPersistence.loadDuduIntegration(this)) return
         if (isDestroyed || shuttingDown.get() || sink == null || isActivityStarted) return
         if (!AirPlayPersistence.loadCenterMapOverlay(this) || !AirPlayPersistence.loadClusterMapEnabled(this)) return
         if (!AirPlayPersistence.loadCenterMapFollowsDashboard(this)) return
@@ -1961,6 +2079,11 @@ open class CarPlayHostActivity : ComponentActivity() {
             return
         }
         CarPlayScreen.destroyed(this)
+        cancelDuduResize()
+        stopDuduObservation?.invoke()
+        stopDuduSettingsObservation?.invoke()
+        carPlayOverlay?.hide()
+        carPlayOverlay = null
         runCatching { unregisterReceiver(bluetoothOnReceiver) }
         mainHandler.removeCallbacks(hideTemporarySystemBars)
         dropHeldTouch()
@@ -1971,7 +2094,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         hostAppearanceResumed = false
         updateCallPopupGuard()
         AppAppearanceRuntime.clearHost(this)
-        nightModeController.pause()
+        if (!keepsBackgroundTheme()) nightModeController.pause()
         pictureBinding?.close()
         pictureBinding = null
         removeVideoSurfaceProbe()
@@ -2001,7 +2124,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         dismissClusterPresentation()
         mainHandler.removeCallbacks(applyDisplaySize)
         mainHandler.removeCallbacks(expireOldLogLines)
-        mainHandler.removeCallbacks(pollConfiguration)
+        if (!keepsBackgroundTheme()) mainHandler.removeCallbacks(pollConfiguration)
         videoSurfaceOwner.clear()
         currentSurfaceTexture = null
         fallbackVideoView = null
@@ -2014,6 +2137,8 @@ open class CarPlayHostActivity : ComponentActivity() {
 
     private fun buildContentView(): View {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        fullScreenRoot = root
+        val presentation = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val video = TextureView(this).apply {
             isOpaque = false
             surfaceTextureListener = textureListener
@@ -2023,12 +2148,25 @@ open class CarPlayHostActivity : ComponentActivity() {
             isClickable = true
             setOnTouchListener { view, event -> onHostTouch(view, event) }
         }
-        root.addView(video, FrameLayout.LayoutParams(-1, -1))
+        presentation.addView(video, FrameLayout.LayoutParams(-1, -1))
         blackCornerOverlay = CarPlayBlackCornerOverlay(this).also { overlay ->
             overlay.radiusDp = localCornerRadius()
-            root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
+            presentation.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         }
-        root.addView(gestureLayer, FrameLayout.LayoutParams(-1, -1))
+        presentation.addView(gestureLayer, FrameLayout.LayoutParams(-1, -1))
+        root.addView(presentation, FrameLayout.LayoutParams(-1, -1))
+        carPlayOverlay = CarPlayOverlayHost(this, presentation, root, beforeMove = {
+            releaseCarPlayTouches()
+            gestureSequenceActive = false
+            gestureTracking = false
+            touchOutsideContent = false
+            closePicturePanel()
+            mainHandler.removeCallbacks(applyDisplaySize)
+            pendingDisplaySize = null
+        }, failed = { reason ->
+            appendLog("Dudu CarPlay overlay failed: $reason")
+            Toast.makeText(this, R.string.settings_dudu_overlay_failed, Toast.LENGTH_LONG).show()
+        })
         // Measure the preparation content naturally, then fit it inside the safe viewport.
         val viewport = object : FrameLayout(this) {
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -5006,6 +5144,13 @@ open class CarPlayHostActivity : ComponentActivity() {
         // The whole screen and CarPlay's full window in each orientation: the system bars take their
         // place in both, so a remembered split window is sized against the window of its orientation.
         val screen = android.util.DisplayMetrics().also { windowManager.defaultDisplay.getRealMetrics(it) }
+        val cardSize = if (AirPlayPersistence.loadDuduIntegration(this))
+            DuduLauncher.rememberedSize(this, screen.widthPixels, screen.heightPixels) else null
+        val duduWindow: (Boolean) -> Pair<Float, Float>? = { portrait ->
+            cardSize?.takeIf { portrait == (screen.heightPixels > screen.widthPixels) }?.let {
+                (it.first.toFloat() / size.width) to (it.second.toFloat() / size.height)
+            }
+        }
         val screenLong = maxOf(screen.widthPixels, screen.heightPixels)
         val screenShort = minOf(screen.widthPixels, screen.heightPixels)
         val (landscapeWindow, portraitWindow) = CarPlayRotation.turnedWindows(size.width, size.height,
@@ -5039,10 +5184,14 @@ open class CarPlayHostActivity : ComponentActivity() {
                 heightPhysicalMm = squareMm, viewArea = null, safeArea = null)
         }
         val viewAreas = if (square == null) {
+            // A Dudu card (or a split Activity) can be tall on a landscape head unit. The slot follows
+            // the physical screen, so the later card request can find it regardless of window shape.
+            val portrait = if (AirPlayPersistence.loadDuduIntegration(this)) screen.heightPixels > screen.widthPixels
+                else display.heightPixels > display.widthPixels
             CarPlayViewAreas.build(display.widthPixels, display.heightPixels, listOf(
-                CarPlayViewAreas.Screen(display.widthPixels, display.heightPixels, portrait = display.heightPixels > display.widthPixels),
-            ), dock, splitWindow, startPortrait = display.heightPixels > display.widthPixels,
-                sidePanel = SidePanelSettings.enabled(this), rightHandDrive = rightHandDrive)
+                CarPlayViewAreas.Screen(display.widthPixels, display.heightPixels, portrait = portrait),
+            ), dock, splitWindow, startPortrait = portrait,
+                sidePanel = SidePanelSettings.enabled(this), rightHandDrive = rightHandDrive, duduWindow = duduWindow)
         } else {
             val (landscape, portrait) = CarPlayRotation.turningAreas(square, size.width, size.height,
                 screen.widthPixels, screen.heightPixels)
@@ -5050,7 +5199,7 @@ open class CarPlayHostActivity : ComponentActivity() {
                 CarPlayViewAreas.Screen(landscape.first, landscape.second, portrait = false),
                 CarPlayViewAreas.Screen(portrait.first, portrait.second, portrait = true),
             ), dock, splitWindow, startPortrait = size.height > size.width, sidePanel = SidePanelSettings.enabled(this),
-                rightHandDrive = rightHandDrive)
+                rightHandDrive = rightHandDrive, duduWindow = duduWindow)
         }
         pendingViewAreas = viewAreas
         val declared = if (viewAreas == null) canvas else canvas.copy(viewAreas = viewAreas.areas, initialViewArea = viewAreas.current)
@@ -5166,6 +5315,10 @@ open class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun currentActivitySize(): DisplaySize? {
+        if (AirPlayPersistence.loadDuduIntegration(this)) {
+            fullScreenRoot?.takeIf { it.width > 0 && it.height > 0 }?.let { return DisplaySize(it.width, it.height) }
+            activeDisplaySize?.let { return it }
+        }
         val view = videoView
         if (view != null && view.width > 0 && view.height > 0) {
             return DisplaySize(view.width, view.height)
@@ -5362,6 +5515,8 @@ open class CarPlayHostActivity : ComponentActivity() {
                     showConnectionHelp(null)
                     callPopupSessionReady = true
                     updateCallPopupGuard()
+                    updateThemeMonitoring()
+                    updateDuduOverlay()
                     reconnectAttempts = 0
                     logThemeState(ThemeModeDiagnostics.Source.SESSION_ACTIVE, resources.configuration)
                     syncAirPlayDarkMode(ThemeModeDiagnostics.Source.SESSION_ACTIVE)
@@ -5410,11 +5565,13 @@ open class CarPlayHostActivity : ComponentActivity() {
                     CarPlayBackgroundSession.active = false
                     callPopupSessionReady = false
                     updateCallPopupGuard()
+                    CarPlayMediaKeys.detach(controller)
+                    activeScreenStreamTypes.clear()
+                    updateDuduOverlay()
                     if (menuOpen) {
                         recoveryPendingAfterMenu = true
                         return@runOnUiThread
                     }
-                    activeScreenStreamTypes.clear()
                     ClusterActivityOutput.setStreamActive(false)
                     setConnectionStage(R.string.carplay_session_ended_reconnecting)
                     appendLog("AirPlay session ended; reconnecting from scratch")
@@ -5428,11 +5585,13 @@ open class CarPlayHostActivity : ComponentActivity() {
                     callPopupSessionReady = false
                     updateCallPopupGuard()
                     startupRetryBudget.disconnected()
+                    activeScreenStreamTypes.clear()
+                    CarPlayMediaKeys.detach(controller)
+                    updateDuduOverlay()
                     if (menuOpen) {
                         recoveryPendingAfterMenu = true
                         return@runOnUiThread
                     }
-                    activeScreenStreamTypes.clear()
                     ClusterActivityOutput.setStreamActive(false)
                     setConnectionStage(R.string.transport_error_reconnecting)
                     appendLog("CarPlay transport error: $message; reconnecting from scratch")
@@ -5531,6 +5690,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         updateClusterMapShown()
         sink = snapshot.sink
         sessionDisplay = snapshot.display
+        restoreDuduFullScreen()
         // The hotspot came up under the host that started this session; the menu keeps naming it.
         CarPlayBackgroundSession.hotspotReady?.let {
             hotspotStatus = hotspotStatus.copy(ssid = it.ssid, band = it.band, channel = it.channel, backend = it.backend)
@@ -5577,6 +5737,8 @@ open class CarPlayHostActivity : ComponentActivity() {
         // owns that live session.
         activeAirPlaySession = snapshot.controller.activeAirPlaySession()
         ensureClusterPresentation()
+        updateThemeMonitoring()
+        updateDuduOverlay()
         if (blackCornerRadiusDp == CarPlayBlackCornerOverlay.IPHONE_MASK) {
             snapshot.controller.activeIphoneCornerMask()?.let { (session, png, width) ->
                 activeAirPlaySession = session
@@ -5783,8 +5945,13 @@ open class CarPlayHostActivity : ComponentActivity() {
         return File(filesDir, AUDIO_CAPTURE_DIRECTORY)
     }
 
+    private fun isDuduOutputSize(): Boolean = AirPlayPersistence.loadDuduIntegration(this) &&
+        (sessionDisplay != null || carPlayOverlay?.shown == true || (handshakeResetInProgress && activeDisplaySize != null))
+
     private fun scheduleDisplaySize(width: Int, height: Int) {
         if (width <= 0 || height <= 0 || shuttingDown.get()) return
+        // The overlay's measurements must never replace the full-window canvas, even during teardown.
+        if (isDuduOutputSize()) return
         val size = DisplaySize(width, height)
         if (size == pendingDisplaySize) return
         mainHandler.removeCallbacks(applyDisplaySize)
@@ -5809,6 +5976,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         ViewCompat.getRootWindowInsets(window.decorView)?.isVisible(WindowInsetsCompat.Type.statusBars())
 
     private fun applyDisplaySize(size: DisplaySize) {
+        if (isDuduOutputSize()) return
         val display = sessionDisplay
         if (display != null && applyViewArea(size, display)) return
         val layoutChanged = displayLayoutChanged(size)
@@ -5948,6 +6116,12 @@ open class CarPlayHostActivity : ComponentActivity() {
         display.viewAreas?.let { areas ->
             val area = areas.layoutArea(areas.current)
             if (area.width != display.width || area.height != display.height) {
+                if (AirPlayPersistence.loadDuduIntegration(this) && areas.kindOf(areas.current) != CarPlayViewAreas.Kind.DUDU_CARD) {
+                    val fitted = CarPlayVideoLayout.fit(area.width, area.height, viewWidth, viewHeight)
+                    val scale = fitted.width / area.width
+                    return CarPlayVideoLayout(fitted.left - area.originX * scale, fitted.top - area.originY * scale,
+                        display.width * scale, display.height * scale)
+                }
                 val scaleX = viewWidth.toFloat() / area.width
                 val scaleY = viewHeight.toFloat() / area.height
                 return CarPlayVideoLayout(-area.originX * scaleX, -area.originY * scaleY,
@@ -6112,6 +6286,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         startupRetryButton?.visibility = View.GONE
         appendLog(reason)
         activeScreenStreamTypes.clear()
+        updateDuduOverlay()
         ClusterActivityOutput.setStreamActive(false)
         setConnectionStage(reason)
         Log.i(TAG, "$reason; rebuilding stack at ${size.width}x${size.height}")
@@ -6196,7 +6371,7 @@ open class CarPlayHostActivity : ComponentActivity() {
     private fun openPicturePanel() {
         closePicturePanel()
         val generation = picturePanelGeneration
-        val root = videoView?.parent as? FrameLayout ?: return
+        val root = fullScreenRoot ?: return
         releaseCarPlayTouches()
         root.post {
             if (generation != picturePanelGeneration || isFinishing || isDestroyed) return@post
@@ -6321,6 +6496,7 @@ open class CarPlayHostActivity : ComponentActivity() {
 
     private fun shutdown(terminateProcess: Boolean, reason: String, completion: () -> Unit = {}) {
         if (!shuttingDown.compareAndSet(false, true)) { completion(); return }
+        cancelDuduResize()
         callPopupSessionReady = false
         updateCallPopupGuard()
         resetSidePanel()
@@ -6515,7 +6691,8 @@ open class CarPlayHostActivity : ComponentActivity() {
                 gestureTracking = false
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                if (gestureFingerCount > 0 && event.pointerCount == gestureFingerCount && !gestureSequenceActive) {
+                if (carPlayOverlay?.shown != true && gestureFingerCount > 0 &&
+                    event.pointerCount == gestureFingerCount && !gestureSequenceActive) {
                     gestureSequenceActive = true
                     gestureTracking = true
                     gestureStartX = pointerCentroid(event, horizontal = true)
@@ -6566,7 +6743,12 @@ open class CarPlayHostActivity : ComponentActivity() {
 
         val content = contentRect(view.width, view.height)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            touchOutsideContent = !content.contains(event.x, event.y)
+            val display = sessionDisplay
+            val area = display?.viewAreas?.let { it.layoutArea(it.current) }
+            val viewport = if (AirPlayPersistence.loadDuduIntegration(this) && display != null) {
+                CarPlayVideoLayout.fit(area?.width ?: display.width, area?.height ?: display.height, view.width, view.height)
+            } else content
+            touchOutsideContent = !viewport.contains(event.x, event.y)
         }
         if (touchOutsideContent) {
             // Ignore the entire touch sequence when it starts in a letterbox bar.
@@ -6575,7 +6757,7 @@ open class CarPlayHostActivity : ComponentActivity() {
             }
             return true
         }
-        if (gestureFingerCount > 0 && holdTouch(event, content)) return true
+        if (carPlayOverlay?.shown != true && gestureFingerCount > 0 && holdTouch(event, content)) return true
         flushHeldTouch()
         val contacts = CarPlayTouchMapper.contacts(event, content)
         val queued = controller?.sendTouch(contacts) ?: false
@@ -6670,6 +6852,8 @@ open class CarPlayHostActivity : ComponentActivity() {
                 noPictureShown = false
                 mainHandler.removeCallbacks(noPictureCheck)
                 if (active) mainHandler.postDelayed(noPictureCheck, NO_PICTURE_MILLIS)
+                updateDuduOverlay()
+                updateThemeMonitoring()
             }
             if (type == SCREEN_TYPE_ALT) {
                 Log.i(ClusterMapPresentation.TAG, "cluster stream active=$active")
@@ -7075,6 +7259,7 @@ internal object CarPlayBackgroundSession {
     @Synchronized
     fun store(controller: CarPlayController, sink: AndroidMediaSink, width: Int, height: Int,
         owner: Any, display: CarPlaySessionDisplay, stop: (() -> Unit) -> Unit) {
+        if (this.owner !== owner) (this.owner as? CarPlayHostActivity)?.stopBackgroundThemeMonitoring()
         if (this.controller !== controller) {
             callPopupReady = false
             hotspotReady = null
