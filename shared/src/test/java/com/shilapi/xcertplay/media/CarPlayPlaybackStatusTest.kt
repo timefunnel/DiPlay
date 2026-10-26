@@ -1,6 +1,8 @@
 package com.shilapi.xcertplay.media
 
 import com.shilapi.xcertplay.iap2.message.Iap2Messages
+import com.shilapi.xcertplay.iap2.message.Iap2ControlMessages
+import com.shilapi.xcertplay.iap2.body.Iap2BodyReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -94,5 +96,41 @@ class CarPlayPlaybackStatusTest {
         assertEquals(1L, status.acceptUpdate(packet)?.positionRevision)
         assertEquals(2L, status.acceptUpdate(packet)?.positionRevision)
         assertEquals(2L, status.acceptUpdate(update { group(0) { string(1, "Song") } })?.positionRevision)
+    }
+
+    @Test fun subscribesToTheMediaItemIdentifierAndKeepsItsFirstTitleAcrossLyrics() {
+        val requested = Iap2BodyReader.of(Iap2ControlMessages.startNowPlayingUpdates()).group(0)
+        org.junit.Assert.assertTrue(requested.has(0))
+        val status = CarPlayPlaybackStatus()
+        val first = status.acceptUpdate(update { group(0) {
+            bytes(0, byteArrayOf(0x80.toByte(), 0, 0, 0, 0, 0, 0, 0))
+            string(1, "Song")
+        } })!!
+        assertEquals(Long.MIN_VALUE, first.persistentId)
+        assertEquals("Song", first.trackTitle)
+        val lyric = status.acceptUpdate(update { group(0) { string(1, "First lyric") } })!!
+        assertEquals("First lyric", lyric.title)
+        assertEquals("Song", lyric.trackTitle)
+        assertEquals(Long.MIN_VALUE, lyric.persistentId)
+        assertEquals("Song", status.acceptUpdate(update { group(0) { string(1, "Second lyric") } })?.trackTitle)
+    }
+
+    @Test fun aNewMediaItemWaitsForItsOwnTitleAndSessionEndDiscardsTheOldOne() {
+        val status = CarPlayPlaybackStatus()
+        status.acceptUpdate(update { group(0) { u64(0, 1); string(1, "First song") } })
+        status.acceptUpdate(update { group(0) { string(1, "A lyric") } })
+        val changed = status.acceptUpdate(update { group(0) { u64(0, 2) } })!!
+        assertNull(changed.trackTitle)
+        assertEquals("Second song", status.acceptUpdate(update { group(0) { string(1, "Second song") } })?.trackTitle)
+        status.clearAll()
+        assertEquals("Third song", status.acceptUpdate(update { group(0) { u64(0, 2); string(1, "Third song") } })?.trackTitle)
+    }
+
+    @Test fun anUnspecifiedIdentifierDoesNotBindAllSongsToOneTitle() {
+        val status = CarPlayPlaybackStatus()
+        val info = status.acceptUpdate(update { group(0) { u64(0, 0); string(1, "Song") } })!!
+        assertNull(info.persistentId)
+        assertNull(info.trackTitle)
+        assertEquals("Song", info.title)
     }
 }

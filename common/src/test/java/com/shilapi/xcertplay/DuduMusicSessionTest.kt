@@ -1,6 +1,7 @@
 package com.shilapi.xcertplay
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -24,6 +25,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import org.robolectric.util.ReflectionHelpers
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], manifest = Config.NONE)
@@ -101,6 +103,90 @@ class DuduMusicSessionTest {
         verify(current).setActive(false)
         verify(current).release()
     }
+
+    @Test fun lyricUpdatesKeepTheTitleAndCoverWithoutRepublishingMetadata() {
+        val current = session!!
+        val cover = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        ReflectionHelpers.setField(CarPlayMediaKeys, "artwork", cover)
+        val song = CarPlayNowPlaying(title = "Song", artist = "Artist", album = "Album",
+            durationMillis = 180_000, artworkTransferId = 7, elapsedMillis = 20_000, playing = true)
+        publish(song)
+        idle()
+        val metadata = ArgumentCaptor.forClass(MediaMetadata::class.java)
+        verify(current, atLeastOnce()).setMetadata(metadata.capture())
+        assertEquals("Song", metadata.value.getString(MediaMetadata.METADATA_KEY_TITLE))
+        assertSame(cover, metadata.value.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART))
+        clearInvocations(current)
+        repeat(20) {
+            publish(song.copy(title = "Lyric $it", elapsedMillis = 20_500L + it * 500, positionRevision = it + 1L))
+            idle()
+        }
+        verify(current, never()).setMetadata(any())
+        verify(current, times(20)).setPlaybackState(any())
+        verify(current, never()).setActive(anyBoolean())
+    }
+
+    @Test fun mediaItemChangesUpdateTheTitleEvenForTheSameAlbumArtistDurationAndArtworkReference() {
+        val song = CarPlayNowPlaying(title = "First song", trackTitle = "First song", persistentId = 1,
+            artist = "Artist", album = "Album", durationMillis = 180_000, artworkTransferId = 7)
+        publish(song); idle()
+        clearInvocations(session!!)
+        publish(song.copy(title = "A lyric")); idle()
+        verify(session!!, never()).setMetadata(any())
+        publish(song.copy(title = "Second song", trackTitle = "Second song", persistentId = 2)); idle()
+        val metadata = ArgumentCaptor.forClass(MediaMetadata::class.java)
+        verify(session!!).setMetadata(metadata.capture())
+        assertEquals("Second song", metadata.value.getString(MediaMetadata.METADATA_KEY_TITLE))
+    }
+
+    @Test fun sourcesWithoutAnItemIdentifierStillUpdateAtTheExistingTrackBoundary() {
+        val song = CarPlayNowPlaying(title = "Song", artist = "Artist", durationMillis = 180_000,
+            artworkTransferId = 7, elapsedMillis = 40_000)
+        publish(song); idle()
+        publish(song.copy(title = "A lyric")); idle()
+        clearInvocations(session!!)
+        publish(song.copy(title = "Next song", durationMillis = 200_000, elapsedMillis = 0)); idle()
+        val metadata = ArgumentCaptor.forClass(MediaMetadata::class.java)
+        verify(session!!).setMetadata(metadata.capture())
+        assertEquals("Next song", metadata.value.getString(MediaMetadata.METADATA_KEY_TITLE))
+    }
+
+    @Test fun aLateCoverUsesTheStableTitleAndDisconnectDoesNotCarryItIntoTheNextSession() {
+        val song = CarPlayNowPlaying(title = "Song", artworkTransferId = 7)
+        publish(song); idle()
+        publish(song.copy(title = "A lyric")); idle()
+        clearInvocations(session!!)
+        val cover = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        val resultType = CarPlayMediaKeys.javaClass.declaredClasses.single { it.simpleName == "AmbientArtwork" }
+        val result = resultType.declaredConstructors.single().apply { isAccessible = true }.newInstance(cover, null)
+        val owner = ReflectionHelpers.getField<Any>(CarPlayMediaKeys, "artworkOwner")
+        CarPlayMediaKeys.javaClass.declaredMethods.single { it.name == "onArtworkDecoded" }
+            .apply { isAccessible = true }.invoke(CarPlayMediaKeys, owner, 7, result)
+        val metadata = ArgumentCaptor.forClass(MediaMetadata::class.java)
+        verify(session!!).setMetadata(metadata.capture())
+        assertEquals("Song", metadata.value.getString(MediaMetadata.METADATA_KEY_TITLE))
+        assertSame(cover, metadata.value.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART))
+        CarPlayMediaKeys.detach(phone)
+        retained = CarPlayNowPlaying(title = "New session")
+        CarPlayMediaKeys.attach(context, phone)
+        idle()
+        CarPlayMediaKeys.ensureDuduSession(context)
+        verify(session!!).setMetadata(metadata.capture())
+        assertEquals("New session", metadata.value.getString(MediaMetadata.METADATA_KEY_TITLE))
+    }
+
+    @Test fun withoutDuduTheSessionStillPublishesThePhonesCurrentTitle() {
+        AirPlayPersistence.saveDuduIntegration(context, false)
+        val song = CarPlayNowPlaying(title = "Song", artworkTransferId = 7)
+        publish(song); idle()
+        clearInvocations(session!!)
+        publish(song.copy(title = "A lyric")); idle()
+        val metadata = ArgumentCaptor.forClass(MediaMetadata::class.java)
+        verify(session!!).setMetadata(metadata.capture())
+        assertEquals("A lyric", metadata.value.getString(MediaMetadata.METADATA_KEY_TITLE))
+    }
+
+    private fun idle() = shadowOf(Looper.getMainLooper()).idle()
 
     private fun publish(info: CarPlayNowPlaying) {
         retained = info

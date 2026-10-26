@@ -67,6 +67,7 @@ internal object CarPlayMediaKeys {
     private var appContext: Context? = null
     private var mediaAudioActive = false
     private var nowPlaying = CarPlayNowPlaying()
+    private var duduTitle: String? = null
     private var position = CarPlayMediaPosition()
     private var artwork: Bitmap? = null
     private val artworkCache = LinkedHashMap<Int, Bitmap?>()
@@ -137,7 +138,15 @@ internal object CarPlayMediaKeys {
                 // Resolve retained state at delivery: a queued callback cannot roll a replay back.
                 val update = expected.nowPlayingSnapshot()
                 val previousArtwork = artwork
-                if (albumTrackChanged(nowPlaying, update)) {
+                val previousSessionInfo = sessionInfoLocked()
+                val trackChanged = albumTrackChanged(nowPlaying, update)
+                duduTitle = when {
+                    update.persistentId != null -> update.trackTitle
+                    // Sources without a media-item ID use the existing album/track boundary.
+                    trackChanged || duduTitle == null -> update.title
+                    else -> duduTitle
+                }
+                if (trackChanged) {
                     val previousId = nowPlaying.artworkTransferId
                     if (previousId != null) {
                         ambientColorCache.remove(previousId)
@@ -153,15 +162,17 @@ internal object CarPlayMediaKeys {
                     artwork = nextArtwork(update.artworkTransferId, artworkCache, artwork)
                 }
                 position.update(update, SystemClock.elapsedRealtime())
-                val metadataChanged = metadataChanged(nowPlaying, update) || artwork !== previousArtwork
+                val clusterMetadataChanged = metadataChanged(nowPlaying, update) || artwork !== previousArtwork
                 nowPlaying = update
-                if (metadataChanged) ClusterMusicState.publish(update, artwork)
+                if (clusterMetadataChanged) ClusterMusicState.publish(update, artwork)
                 updateInitialAlbumRecovery(expected)
                 // The iPhone repeats NowPlayingUpdate about twice a second for the position alone.
                 // Republishing the metadata each time sent a copy of the artwork through system_server
                 // to every media listener, and on a DiLink 5.0 Tang that exhausted memory within
                 // minutes. The position goes in the playback state.
-                if (metadataChanged) session?.setMetadata(androidMetadata(update, shownArtworkLocked()))
+                if (metadataChanged(previousSessionInfo, sessionInfoLocked()) || artwork !== previousArtwork) {
+                    session?.setMetadata(androidMetadata(sessionInfoLocked(), shownArtworkLocked()))
+                }
                 publishPlaybackStateLocked()
             }
         }
@@ -198,7 +209,7 @@ internal object CarPlayMediaKeys {
             ClusterMusicState.publish(nowPlaying, artwork)
             controller?.let { com.shilapi.xcertplay.media.AmbientMusicController.albumColorChanged(it, result?.color) }
             controller?.let(::updateInitialAlbumRecovery)
-            session?.setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
+            session?.setMetadata(androidMetadata(sessionInfoLocked(), shownArtworkLocked()))
         }
     }
 
@@ -336,7 +347,7 @@ internal object CarPlayMediaKeys {
             setCallback(callback, mainHandler)
             setSessionActivity(PendingIntent.getActivity(context, 0, Intent(context, CarPlayHostActivity::class.java),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
-            setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
+            setMetadata(androidMetadata(sessionInfoLocked(), shownArtworkLocked()))
             isActive = true
         }
         Log.i(TAG, "media keys active focusDisabled=$focusDisabled focusGranted=$granted")
@@ -400,6 +411,7 @@ internal object CarPlayMediaKeys {
         session = null
         mediaAudioActive = false
         nowPlaying = CarPlayNowPlaying()
+        duduTitle = null
         position = CarPlayMediaPosition()
         artwork = null
         artworkCache.clear()
@@ -469,8 +481,14 @@ internal object CarPlayMediaKeys {
 
     /** Whether [next] changes what the media session's metadata shows; position and play state do not. */
     internal fun metadataChanged(previous: CarPlayNowPlaying, next: CarPlayNowPlaying): Boolean =
-        previous.copy(elapsedMillis = null, playing = false, positionRevision = 0) !=
-            next.copy(elapsedMillis = null, playing = false, positionRevision = 0)
+        previous.copy(elapsedMillis = null, playing = false, positionRevision = 0, persistentId = null, trackTitle = null) !=
+            next.copy(elapsedMillis = null, playing = false, positionRevision = 0, persistentId = null, trackTitle = null)
+
+    // Dudu treats every TITLE change as a new song, clears its cover, then reloads it after 1 s.
+    // Keep only its Android session title stable; raw phone lyrics still reach other consumers.
+    private fun sessionInfoLocked(): CarPlayNowPlaying = if (appContext?.let {
+            AirPlayPersistence.loadDuduIntegration(it)
+        } == true) nowPlaying.copy(title = duduTitle) else nowPlaying
 
     internal fun androidMetadata(info: CarPlayNowPlaying, artwork: Bitmap? = null): MediaMetadata =
         MediaMetadata.Builder().apply {
