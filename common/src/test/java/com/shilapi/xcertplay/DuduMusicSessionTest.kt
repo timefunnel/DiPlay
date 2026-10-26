@@ -139,6 +139,21 @@ class DuduMusicSessionTest {
         assertEquals("Second song", metadata.value.getString(MediaMetadata.METADATA_KEY_TITLE))
     }
 
+    @Test fun missingStableItemTitleKeepsThePreviousTitleForDuduLookup() {
+        val song = CarPlayNowPlaying(title = "Song", persistentId = 1, artist = "Artist",
+            durationMillis = 180_000)
+        publish(song); idle()
+        val metadata = ArgumentCaptor.forClass(MediaMetadata::class.java)
+        verify(session!!, atLeastOnce()).setMetadata(metadata.capture())
+        assertEquals("Song", metadata.allValues.last().getString(MediaMetadata.METADATA_KEY_TITLE))
+
+        clearInvocations(session!!)
+        publish(song.copy(title = null, trackTitle = null, elapsedMillis = 10_000)); idle()
+
+        verify(session!!, never()).setMetadata(any())
+        assertEquals("Song", metadata.allValues.last().getString(MediaMetadata.METADATA_KEY_TITLE))
+    }
+
     @Test fun sourcesWithoutAnItemIdentifierStillUpdateAtTheExistingTrackBoundary() {
         val song = CarPlayNowPlaying(title = "Song", artist = "Artist", durationMillis = 180_000,
             artworkTransferId = 7, elapsedMillis = 40_000)

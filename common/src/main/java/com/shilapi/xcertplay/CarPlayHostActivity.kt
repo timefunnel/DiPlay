@@ -663,6 +663,15 @@ open class CarPlayHostActivity : ComponentActivity() {
             mainHandler.post(retry)
         }
     }
+    private val configurationReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != Intent.ACTION_CONFIGURATION_CHANGED) return
+            runOnUiThread {
+                if (isDestroyed || shuttingDown.get()) return@runOnUiThread
+                refreshConfiguration(source = ThemeModeDiagnostics.Source.CALLBACK)
+            }
+        }
+    }
     // How often the current controller reached its control loop, and whether a loss came after the
     // last time. A retry scheduled before the count went up leaves the attempt alone only while it is
     // still running when the retry fires (#873).
@@ -882,6 +891,14 @@ open class CarPlayHostActivity : ComponentActivity() {
             registerReceiver(bluetoothOnReceiver, bluetoothState, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(bluetoothOnReceiver, bluetoothState)
+        }
+        val configurationFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_CONFIGURATION_CHANGED)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(configurationReceiver, configurationFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(configurationReceiver, configurationFilter)
         }
         NavigationWidgetUpdater.attach(applicationContext)
         CarPlayCallKeys.install(applicationContext)
@@ -2085,6 +2102,7 @@ open class CarPlayHostActivity : ComponentActivity() {
         carPlayOverlay?.hide()
         carPlayOverlay = null
         runCatching { unregisterReceiver(bluetoothOnReceiver) }
+        runCatching { unregisterReceiver(configurationReceiver) }
         mainHandler.removeCallbacks(hideTemporarySystemBars)
         dropHeldTouch()
         discardLastPicture()
@@ -5915,6 +5933,9 @@ open class CarPlayHostActivity : ComponentActivity() {
     private fun syncAirPlayDarkMode(source: ThemeModeDiagnostics.Source) {
         val session = activeAirPlaySession
         val night = darkMode
+        val duduCardIndex = sessionDisplay?.viewAreas?.takeIf {
+            !isActivityStarted && it.kindOf(it.current) == CarPlayViewAreas.Kind.DUDU_CARD
+        }?.current
         if (session == null) {
             appendLog("THEME_DIAGNOSTIC request source=${source.label} applied=${if (night) "dark" else "light"} sessionActive=false")
             return
@@ -5926,6 +5947,10 @@ open class CarPlayHostActivity : ComponentActivity() {
                 appendLog(
                     "THEME_DIAGNOSTIC send source=${source.label} applied=${if (night) "dark" else "light"} commandWritten=$sent",
                 )
+                if (sent && duduCardIndex != null) {
+                    val refreshed = session.showViewArea(duduCardIndex)
+                    appendLog("Dudu map refresh after theme: view area $duduCardIndex sent=$refreshed")
+                }
                 Log.i(
                     TAG,
                     "AirPlay dark mode=${if (night) "dark" else "light"} eventChannelReady=$sent",

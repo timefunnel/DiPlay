@@ -18,6 +18,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.`when`
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -128,6 +129,28 @@ class CarPlayHostThemeDiagnosticsTest {
         assertTrue(shadowOf(RuntimeEnvironment.getApplication()).broadcastIntents.none {
             it.action == "AUTONAVI_STANDARD_BROADCAST_SEND" && it.getIntExtra("KEY_TYPE", -1) == 10019
         })
+    }
+
+    @Test fun backgroundThemeRefreshesTheActiveDuduCardWithoutReturningToFullScreen() {
+        val session = mock(AirPlaySession::class.java)
+        val areas = com.shilapi.xcertplay.CarPlayViewAreas.build(
+            1920, 1080, CarPlayDock.AUTOMATIC, null,
+            duduWindow = 1328f / 1920 to 1012f / 1080,
+        )!!
+        val card = areas.duduCard(1328, 1012, false)!!
+        areas.use(card)
+        setField("activeAirPlaySession", session)
+        setField("sessionDisplay", CarPlaySessionDisplay(1920, 1080, 0, true, true, 1920, 1080,
+            viewAreas = areas))
+        setField("isActivityStarted", false)
+        `when`(session.setNightMode(false)).thenReturn(true)
+        `when`(session.showViewArea(card)).thenReturn(true)
+
+        refresh(Configuration.UI_MODE_NIGHT_NO, ThemeModeDiagnostics.Source.CALLBACK)
+        commands.runAll()
+
+        verify(session).setNightMode(false)
+        verify(session).showViewArea(card)
     }
 
     private fun refresh(mode: Int, source: ThemeModeDiagnostics.Source) {

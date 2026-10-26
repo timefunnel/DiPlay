@@ -141,7 +141,11 @@ internal object CarPlayMediaKeys {
                 val previousSessionInfo = sessionInfoLocked()
                 val trackChanged = albumTrackChanged(nowPlaying, update)
                 duduTitle = when {
-                    update.persistentId != null -> update.trackTitle
+                    update.persistentId != null -> update.trackTitle ?: if (trackChanged || duduTitle == null) {
+                        update.title
+                    } else {
+                        duduTitle
+                    }
                     // Sources without a media-item ID use the existing album/track boundary.
                     trackChanged || duduTitle == null -> update.title
                     else -> duduTitle
